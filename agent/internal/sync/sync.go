@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/zuens2020/mcp-relay/agent/internal/adapters"
+	"github.com/zuens2020/mcp-relay/agent/internal/backup"
 	"github.com/zuens2020/mcp-relay/agent/internal/config"
 	"github.com/zuens2020/mcp-relay/agent/internal/detect"
 	"github.com/zuens2020/mcp-relay/agent/internal/fsutil"
@@ -63,6 +64,7 @@ func (c *Client) Register(det detect.Result) error {
 		"targets":        targets,
 		"hostname":       host,
 		"agent_version":  c.Cfg.AgentVersion,
+		"detected":       det.Detected,
 	}
 	var out registerResp
 	if err := c.postJSON("/api/v1/devices/register", body, nil, &out); err != nil {
@@ -82,8 +84,42 @@ func (c *Client) Sync(skillsRoot string) error {
 	if c.Res.Mode == paths.ModeLive && !c.Cfg.AllowLiveWrites {
 		return fmt.Errorf("live mode requires allow_live_writes: true in %s", c.Res.ConfigPath())
 	}
-	profile := c.Cfg.Profile
+
 	targets := c.Cfg.Targets
+	if len(targets) == 0 {
+		det := detect.Run(c.Res)
+		targets = det.Targets
+		c.Cfg.Targets = targets
+	}
+
+	// 1) backup before any mutation
+	bakDir, err := backup.Run(c.Res, targets)
+	if err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
+	fmt.Printf("backup: %s\n", bakDir)
+
+	// 2) bootstrap empty server configs from local
+	if c.Res.Mode != paths.ModeDryRun {
+		for _, t := range targets {
+			br, err := c.BootstrapTarget(t)
+			if err != nil {
+				return fmt.Errorf("bootstrap %s: %w", t, err)
+			}
+			if br != nil {
+				fmt.Printf("bootstrap %s: %s", t, br.Status)
+				if br.Reason != "" {
+					fmt.Printf(" (%s)", br.Reason)
+				}
+				if br.ServerCount > 0 {
+					fmt.Printf(" servers=%d", br.ServerCount)
+				}
+				fmt.Println()
+			}
+		}
+	}
+
+	profile := c.Cfg.Profile
 	q := url.Values{}
 	q.Set("profile", profile)
 	q.Set("targets", strings.Join(targets, ","))
@@ -93,7 +129,7 @@ func (c *Client) Sync(skillsRoot string) error {
 	}
 	art := latest.Artifact
 	byTarget, _ := art["targets"].(map[string]any)
-	detail := map[string]any{"targets": map[string]any{}}
+	detail := map[string]any{"targets": map[string]any{}, "backup": bakDir}
 
 	for _, t := range targets {
 		raw, _ := byTarget[t].(map[string]any)
@@ -113,7 +149,7 @@ func (c *Client) Sync(skillsRoot string) error {
 			continue
 		}
 		if err := ad.Apply(c.Res, servers); err != nil {
-			_ = c.report(latest.ID, false, map[string]any{"error": err.Error(), "target": t})
+			_ = c.report(latest.ID, false, map[string]any{"error": err.Error(), "target": t, "backup": bakDir})
 			return fmt.Errorf("apply %s: %w", t, err)
 		}
 		detail["targets"].(map[string]any)[t] = len(servers)
@@ -131,7 +167,6 @@ func (c *Client) Sync(skillsRoot string) error {
 			tmap, _ := sm["targets"].(map[string]any)
 			src := filepath.Join(skillsRoot, relPath)
 			if skillsRoot == "" || !dirExists(src) {
-				// optional: skip if no local skills repo mounted
 				continue
 			}
 			for _, t := range targets {
@@ -149,7 +184,7 @@ func (c *Client) Sync(skillsRoot string) error {
 		}
 	}
 
-	state := map[string]any{"last_release_id": latest.ID, "synced_at": time.Now().Format(time.RFC3339)}
+	state := map[string]any{"last_release_id": latest.ID, "synced_at": time.Now().Format(time.RFC3339), "backup": bakDir}
 	sb, _ := json.MarshalIndent(state, "", "  ")
 	if c.Res.Mode != paths.ModeDryRun {
 		_ = fsutil.AtomicWrite(c.Res, c.Res.StatePath(), append(sb, '\n'))

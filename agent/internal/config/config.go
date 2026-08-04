@@ -21,8 +21,9 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &Config{
-				RelayURL:     "http://127.0.0.1:8740",
-				AgentVersion: "0.1.0",
+				RelayURL:        "http://127.0.0.1:8740",
+				AgentVersion:    "0.1.0",
+				AllowLiveWrites: true,
 			}, nil
 		}
 		return nil, err

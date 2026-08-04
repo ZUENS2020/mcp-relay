@@ -11,10 +11,17 @@ import (
 	"github.com/zuens2020/mcp-relay/agent/internal/paths"
 )
 
+type DetectedAgent struct {
+	ID      string `json:"id"`
+	Path    string `json:"path,omitempty"`
+	Present bool   `json:"present"`
+}
+
 type Result struct {
-	Profile string   `json:"profile"`
-	Targets []string `json:"targets"`
-	Notes   []string `json:"notes,omitempty"`
+	Profile  string          `json:"profile"`
+	Targets  []string        `json:"targets"`
+	Detected []DetectedAgent `json:"detected,omitempty"`
+	Notes    []string        `json:"notes,omitempty"`
 }
 
 func Profile(home string) string {
@@ -126,5 +133,13 @@ func Targets(r *paths.Resolver) ([]string, []string) {
 
 func Run(r *paths.Resolver) Result {
 	t, notes := Targets(r)
-	return Result{Profile: Profile(r.RealHome), Targets: t, Notes: notes}
+	detected := make([]DetectedAgent, 0, len(t))
+	for _, id := range t {
+		path, err := r.MCPPath(id)
+		if err != nil {
+			path = ""
+		}
+		detected = append(detected, DetectedAgent{ID: id, Path: path, Present: true})
+	}
+	return Result{Profile: Profile(r.RealHome), Targets: t, Detected: detected, Notes: notes}
 }

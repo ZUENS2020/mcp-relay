@@ -34,7 +34,7 @@ func Create(mode Mode, home, sandboxRoot string) (*Resolver, error) {
 	}
 	relayRoot := os.Getenv("RELAY_ROOT")
 	if relayRoot == "" {
-		relayRoot = filepath.Join(home, ".relay")
+		relayRoot = filepath.Join(home, ".mcp-relay")
 	}
 	if sandboxRoot == "" {
 		sandboxRoot = os.Getenv("RELAY_SANDBOX_ROOT")
@@ -48,7 +48,7 @@ func Create(mode Mode, home, sandboxRoot string) (*Resolver, error) {
 		case ModeSandbox, ModeDryRun, ModeLive:
 			mode = Mode(env)
 		default:
-			mode = ModeSandbox
+			mode = ModeLive
 		}
 	}
 	return &Resolver{Mode: mode, RealHome: home, RelayRoot: relayRoot, SandboxRoot: sandboxRoot}, nil
@@ -87,14 +87,13 @@ func (r *Resolver) ConfigPath() string {
 }
 
 func (r *Resolver) EnsureLayout() error {
-	if err := os.MkdirAll(r.RelayRoot, 0o755); err != nil {
-		return err
-	}
+	dirs := []string{r.RelayRoot, r.BackupsDir(), r.ManagedDir(), filepath.Join(r.RelayRoot, "logs")}
 	if r.Mode == ModeSandbox {
-		for _, d := range []string{r.Home(), r.ManagedDir(), r.BackupsDir()} {
-			if err := os.MkdirAll(d, 0o755); err != nil {
-				return err
-			}
+		dirs = append(dirs, r.Home())
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return err
 		}
 	}
 	return nil
