@@ -20,8 +20,17 @@ PROFILES = ("windows-desktop", "mac-laptop", "nec-server")
 
 DATA_DIR = Path(os.environ.get("RELAY_DATA", "/data")).resolve()
 DB_PATH = DATA_DIR / "relay.db"
-CONFIG_REPO = Path(os.environ.get("RELAY_CONFIG_REPO", str(Path(__file__).resolve().parents[3] / "config-repo")))
-SKILLS_ROOT = Path(os.environ.get("SKILLS_ROOT", str(Path(__file__).resolve().parents[3] / "skills-repo")))
+
+def _default_repo(name: str) -> Path:
+    # Prefer env; fall back to repo layout when running from source checkout.
+    for base in Path(__file__).resolve().parents:
+        cand = base / name
+        if cand.exists():
+            return cand
+    return Path(name)
+
+CONFIG_REPO = Path(os.environ.get("RELAY_CONFIG_REPO", str(_default_repo("config-repo"))))
+SKILLS_ROOT = Path(os.environ.get("SKILLS_ROOT", str(_default_repo("skills-repo"))))
 
 
 def utcnow() -> str:
