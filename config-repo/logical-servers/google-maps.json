@@ -1,0 +1,16 @@
+{
+  "tags": [
+    "maps",
+    "local"
+  ],
+  "id": "google-maps",
+  "transport": "stdio",
+  "default": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-google-maps"
+    ]
+  },
+  "display_name": "Google Maps MCP"
+}

@@ -1,0 +1,15 @@
+[
+  {
+    "id": "relay-hello",
+    "version": "0.1.0",
+    "path": "relay-hello",
+    "targets": {
+      "cursor": { "install_path": ".cursor/skills/relay-hello" },
+      "hermes": { "install_path": ".hermes/skills/relay/relay-hello" },
+      "pi": { "install_path": ".pi/agent/skills/relay-hello" },
+      "codex": { "install_path": ".codex/skills/relay-hello" },
+      "claude-code": { "install_path": ".claude/skills/relay-hello" }
+    },
+    "profiles": ["windows-desktop", "mac-laptop", "nec-server"]
+  }
+]

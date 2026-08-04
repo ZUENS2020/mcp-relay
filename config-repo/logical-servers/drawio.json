@@ -1,0 +1,16 @@
+{
+  "tags": [
+    "creative",
+    "local"
+  ],
+  "id": "drawio",
+  "transport": "stdio",
+  "default": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "@drawio/mcp"
+    ]
+  },
+  "display_name": "draw.io MCP"
+}

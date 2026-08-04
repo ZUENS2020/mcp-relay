@@ -1,0 +1,16 @@
+{
+  "tags": [
+    "travel",
+    "local"
+  ],
+  "id": "trvl",
+  "transport": "stdio",
+  "default": {
+    "command": "npx",
+    "args": [
+      "-y",
+      "trvl"
+    ]
+  },
+  "display_name": "trvl MCP"
+}

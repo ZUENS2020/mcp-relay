@@ -1,0 +1,12 @@
+{
+  "tags": [
+    "cloudflare",
+    "remote"
+  ],
+  "id": "cloudflare",
+  "transport": "http",
+  "default": {
+    "url": "https://bindings.mcp.cloudflare.com/mcp"
+  },
+  "display_name": "Cloudflare MCP"
+}

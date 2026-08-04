@@ -1,0 +1,16 @@
+{
+  "tags": [
+    "memory",
+    "remote"
+  ],
+  "id": "nowledge-mem",
+  "transport": "http",
+  "default": {
+    "url": "https://example.com/mcp",
+    "type": "streamableHttp",
+    "headers": {
+      "Authorization": "Bearer ${NMEM_TOKEN}"
+    }
+  },
+  "display_name": "Nowledge Mem"
+}

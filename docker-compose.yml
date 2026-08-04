@@ -1,0 +1,24 @@
+services:
+  relay:
+    build: ./services/relay-api
+    container_name: mcp-relay
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:8740:8740"
+    environment:
+      - RELAY_DATA=/data
+      - RELAY_CONFIG_REPO=/config-repo
+      - SKILLS_ROOT=/data/skills-repo
+      - RELAY_BASE_URL=https://example.com
+    volumes:
+      - ./data:/data
+      - ./config-repo:/config-repo:ro
+      - ./skills-repo:/data/skills-repo:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8740/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

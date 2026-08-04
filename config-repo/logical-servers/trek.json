@@ -1,0 +1,16 @@
+{
+  "tags": [
+    "travel",
+    "remote"
+  ],
+  "id": "trek",
+  "transport": "http",
+  "default": {
+    "url": "https://example.com/mcp",
+    "type": "streamableHttp",
+    "headers": {
+      "Authorization": "Bearer ${TREK_MCP_TOKEN}"
+    }
+  },
+  "display_name": "TREK Travel MCP"
+}

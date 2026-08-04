@@ -1,0 +1,301 @@
+[
+  {
+    "logical_id": "trek",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "trek",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "pi",
+    "enabled": true
+  },
+  {
+    "logical_id": "trek",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "codex",
+    "enabled": true
+  },
+  {
+    "logical_id": "trek",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "claude-code",
+    "enabled": true
+  },
+  {
+    "logical_id": "trek",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "hermes",
+    "enabled": true
+  },
+  {
+    "logical_id": "trek",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "trek",
+    "overrides": {},
+    "profile": "mac-laptop",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "nowledge-mem",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "nowledge-mem",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "pi",
+    "enabled": true
+  },
+  {
+    "logical_id": "nowledge-mem",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "codex",
+    "enabled": true
+  },
+  {
+    "logical_id": "nowledge-mem",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "claude-code",
+    "enabled": true
+  },
+  {
+    "logical_id": "nowledge-mem",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "hermes",
+    "enabled": true
+  },
+  {
+    "logical_id": "nowledge-mem",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "nowledge-mem",
+    "overrides": {},
+    "profile": "mac-laptop",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "profile": "windows-desktop",
+    "target": "cursor",
+    "overrides": {
+      "env": {
+        "HTTP_PROXY": "http://127.0.0.1:7891",
+        "HTTPS_PROXY": "http://127.0.0.1:7891"
+      }
+    },
+    "enabled": true,
+    "logical_id": "drawio"
+  },
+  {
+    "logical_id": "drawio",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "pi",
+    "enabled": true
+  },
+  {
+    "logical_id": "drawio",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "codex",
+    "enabled": true
+  },
+  {
+    "logical_id": "drawio",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "claude-code",
+    "enabled": true
+  },
+  {
+    "logical_id": "drawio",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "hermes",
+    "enabled": true
+  },
+  {
+    "logical_id": "drawio",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "drawio",
+    "overrides": {},
+    "profile": "mac-laptop",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "trvl",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "trvl",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "pi",
+    "enabled": true
+  },
+  {
+    "logical_id": "trvl",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "codex",
+    "enabled": true
+  },
+  {
+    "logical_id": "trvl",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "claude-code",
+    "enabled": true
+  },
+  {
+    "logical_id": "trvl",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "hermes",
+    "enabled": true
+  },
+  {
+    "logical_id": "trvl",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "trvl",
+    "overrides": {},
+    "profile": "mac-laptop",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "google-maps",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "google-maps",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "pi",
+    "enabled": true
+  },
+  {
+    "logical_id": "google-maps",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "codex",
+    "enabled": true
+  },
+  {
+    "logical_id": "google-maps",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "claude-code",
+    "enabled": true
+  },
+  {
+    "logical_id": "google-maps",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "hermes",
+    "enabled": true
+  },
+  {
+    "logical_id": "google-maps",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "google-maps",
+    "overrides": {},
+    "profile": "mac-laptop",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "cloudflare",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "cloudflare",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "pi",
+    "enabled": true
+  },
+  {
+    "logical_id": "cloudflare",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "codex",
+    "enabled": true
+  },
+  {
+    "logical_id": "cloudflare",
+    "overrides": {},
+    "profile": "windows-desktop",
+    "target": "claude-code",
+    "enabled": true
+  },
+  {
+    "logical_id": "cloudflare",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "hermes",
+    "enabled": true
+  },
+  {
+    "logical_id": "cloudflare",
+    "overrides": {},
+    "profile": "nec-server",
+    "target": "cursor",
+    "enabled": true
+  },
+  {
+    "logical_id": "cloudflare",
+    "overrides": {},
+    "profile": "mac-laptop",
+    "target": "cursor",
+    "enabled": true
+  }
+]
