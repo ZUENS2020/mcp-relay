@@ -1,0 +1,36 @@
+{
+  "name": "@zuens2020/mcp-relay",
+  "version": "0.2.0",
+  "description": "MCP Relay 客户端：配置服务端、备份本地 MCP、同步下发",
+  "bin": {
+    "mcp-relay": "bin/mcp-relay.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "@zuens2020/mcp-relay-win32-x64": "0.2.0",
+    "@zuens2020/mcp-relay-darwin-x64": "0.2.0",
+    "@zuens2020/mcp-relay-darwin-arm64": "0.2.0",
+    "@zuens2020/mcp-relay-linux-x64": "0.2.0"
+  },
+  "keywords": [
+    "mcp",
+    "relay",
+    "cursor",
+    "cli"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZUENS2020/mcp-relay.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

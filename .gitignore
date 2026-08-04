@@ -34,4 +34,11 @@ Thumbs.db
 
 # Build artifacts
 dist/
-bin/
+/bin/
+agent/bin/
+
+# Platform binaries are produced by CI; keep placeholders in git, ignore large binaries locally
+packages/*/bin/relay-agent
+packages/*/bin/relay-agent.exe
+!packages/*/bin/.gitkeep
+

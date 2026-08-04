@@ -1,0 +1,10 @@
+{
+  "name": "@zuens2020/mcp-relay-linux-x64",
+  "version": "0.2.0",
+  "description": "MCP Relay agent binary for linux-x64",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "files": ["bin", "package.json"],
+  "license": "MIT",
+  "publishConfig": { "access": "public" }
+}
