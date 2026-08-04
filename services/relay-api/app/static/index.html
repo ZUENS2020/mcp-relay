@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MCP Relay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;650&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="nav">
+      <p class="brand">MCP Relay</p>
+      <p class="brand-sub">配置控制平面</p>
+      <div class="nav-links">
+        <button type="button" data-view="overview" class="active">总览</button>
+        <button type="button" data-view="servers">逻辑 MCP</button>
+        <button type="button" data-view="bindings">绑定</button>
+        <button type="button" data-view="preview">渲染预览</button>
+        <button type="button" data-view="devices">设备</button>
+        <button type="button" data-view="skills">Skills</button>
+        <button type="button" data-view="audit">审计</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section id="view-overview">
+        <div class="header">
+          <div>
+            <h2>总览</h2>
+            <p>中心定义 → profile × target 渲染 → agent 拉取</p>
+          </div>
+          <div class="toolbar">
+            <button class="btn" id="btn-refresh" type="button">刷新</button>
+            <button class="btn btn-primary" id="btn-release" type="button">发布 Release</button>
+          </div>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="label">Logical servers</div><div class="value" id="stat-servers">—</div></div>
+          <div class="stat"><div class="label">Bindings</div><div class="value" id="stat-bindings">—</div></div>
+          <div class="stat"><div class="label">Devices</div><div class="value" id="stat-devices">—</div></div>
+          <div class="stat"><div class="label">Skill packs</div><div class="value" id="stat-skills">—</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>最近设备同步</h3><span class="muted" id="health-line">checking…</span></div>
+          <div id="overview-devices"></div>
+        </div>
+      </section>
+
+      <section id="view-servers" class="hidden">
+        <div class="header">
+          <div>
+            <h2>逻辑 MCP</h2>
+            <p>一处定义，按 binding 覆盖后分发</p>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-head"><h3>已注册</h3></div>
+            <div id="servers-table"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>新增 / 更新</h3></div>
+            <form id="server-form" class="form-grid">
+              <label>ID<input name="id" required placeholder="trek" /></label>
+              <label>显示名<input name="display_name" placeholder="TREK Travel MCP" /></label>
+              <label>Transport
+                <select name="transport">
+                  <option value="http">http</option>
+                  <option value="stdio">stdio</option>
+                </select>
+              </label>
+              <label>Default JSON
+                <textarea name="default_json" required>{"url":"https://example.com/mcp"}</textarea>
+              </label>
+              <label>Tags（逗号分隔）<input name="tags" placeholder="travel,remote" /></label>
+            </form>
+            <div class="form-actions">
+              <button class="btn btn-primary" type="submit" form="server-form">保存</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-bindings" class="hidden">
+        <div class="header">
+          <div>
+            <h2>绑定</h2>
+            <p>logical × profile × target</p>
+          </div>
+          <div class="toolbar">
+            <select id="filter-profile">
+              <option value="">全部 profile</option>
+              <option>windows-desktop</option>
+              <option>mac-laptop</option>
+              <option>nec-server</option>
+            </select>
+            <select id="filter-target">
+              <option value="">全部 target</option>
+              <option>cursor</option>
+              <option>hermes</option>
+              <option>pi</option>
+              <option>codex</option>
+              <option>claude-code</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-head"><h3>列表</h3></div>
+            <div id="bindings-table"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>新增 / 更新</h3></div>
+            <form id="binding-form" class="form-grid">
+              <label>Logical ID<input name="logical_id" required list="logical-ids" /></label>
+              <datalist id="logical-ids"></datalist>
+              <label>Profile
+                <select name="profile">
+                  <option>windows-desktop</option>
+                  <option>mac-laptop</option>
+                  <option>nec-server</option>
+                </select>
+              </label>
+              <label>Target
+                <select name="target">
+                  <option>cursor</option>
+                  <option>hermes</option>
+                  <option>pi</option>
+                  <option>codex</option>
+                  <option>claude-code</option>
+                </select>
+              </label>
+              <label><span><input type="checkbox" name="enabled" checked /> Enabled</span></label>
+              <label>Overrides JSON<textarea name="overrides_json">{}</textarea></label>
+            </form>
+            <div class="form-actions">
+              <button class="btn btn-primary" type="submit" form="binding-form">保存</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-preview" class="hidden">
+        <div class="header">
+          <div>
+            <h2>渲染预览</h2>
+            <p>不写本地文件，只看各 target 最终配置</p>
+          </div>
+          <div class="toolbar">
+            <select id="preview-profile">
+              <option>windows-desktop</option>
+              <option>mac-laptop</option>
+              <option>nec-server</option>
+            </select>
+            <select id="preview-target">
+              <option>cursor</option>
+              <option>hermes</option>
+              <option>pi</option>
+              <option>codex</option>
+              <option>claude-code</option>
+            </select>
+            <button class="btn btn-primary" id="btn-preview" type="button">预览</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Artifact</h3><span class="muted" id="preview-meta"></span></div>
+          <pre class="preview" id="preview-out">选择 profile / target 后预览</pre>
+        </div>
+      </section>
+
+      <section id="view-devices" class="hidden">
+        <div class="header">
+          <div>
+            <h2>设备</h2>
+            <p>已注册 relay-agent 与最近同步</p>
+          </div>
+        </div>
+        <div class="panel"><div id="devices-table"></div></div>
+      </section>
+
+      <section id="view-skills" class="hidden">
+        <div class="header">
+          <div>
+            <h2>Skill packs</h2>
+            <p>按 target 安装路径分发</p>
+          </div>
+        </div>
+        <div class="panel"><div id="skills-table"></div></div>
+      </section>
+
+      <section id="view-audit" class="hidden">
+        <div class="header">
+          <div>
+            <h2>审计</h2>
+            <p>注册、发布与同步记录</p>
+          </div>
+        </div>
+        <div class="panel"><div id="audit-table"></div></div>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

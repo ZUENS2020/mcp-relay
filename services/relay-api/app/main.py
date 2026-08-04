@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 TARGETS = ("cursor", "hermes", "pi", "codex", "claude-code")
@@ -238,7 +239,11 @@ def build_artifact(profile: str, targets: list[str]) -> dict[str, Any]:
     }
 
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
 app = FastAPI(title="MCP Relay", version="0.1.0")
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.on_event("startup")
@@ -250,6 +255,14 @@ def _startup() -> None:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "time": utcnow()}
+
+
+@app.get("/")
+def admin_ui() -> FileResponse:
+    index = STATIC_DIR / "index.html"
+    if not index.exists():
+        raise HTTPException(404, "frontend not found")
+    return FileResponse(index)
 
 
 # --- Auth helpers ---
@@ -427,6 +440,22 @@ def upsert_logical(body: LogicalIn) -> dict[str, str]:
             "INSERT OR REPLACE INTO logical_servers(id, display_name, transport, default_json, tags_json) VALUES (?,?,?,?,?)",
             (body.id, body.display_name or body.id, body.transport, json.dumps(body.default), json.dumps(body.tags)),
         )
+        conn.execute(
+            "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
+            ("logical.upsert", json.dumps({"id": body.id}), utcnow()),
+        )
+    return {"status": "ok"}
+
+
+@app.delete("/api/v1/logical-servers/{logical_id}")
+def delete_logical(logical_id: str) -> dict[str, str]:
+    with db() as conn:
+        conn.execute("DELETE FROM bindings WHERE logical_id=?", (logical_id,))
+        conn.execute("DELETE FROM logical_servers WHERE id=?", (logical_id,))
+        conn.execute(
+            "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
+            ("logical.delete", json.dumps({"id": logical_id}), utcnow()),
+        )
     return {"status": "ok"}
 
 
@@ -468,7 +497,45 @@ def upsert_binding(body: BindingIn) -> dict[str, str]:
             """,
             (body.logical_id, body.profile, body.target, 1 if body.enabled else 0, json.dumps(body.overrides)),
         )
+        conn.execute(
+            "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
+            (
+                "binding.upsert",
+                json.dumps({"logical_id": body.logical_id, "profile": body.profile, "target": body.target}),
+                utcnow(),
+            ),
+        )
     return {"status": "ok"}
+
+
+@app.delete("/api/v1/bindings/{binding_id}")
+def delete_binding(binding_id: int) -> dict[str, str]:
+    with db() as conn:
+        conn.execute("DELETE FROM bindings WHERE id=?", (binding_id,))
+        conn.execute(
+            "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
+            ("binding.delete", json.dumps({"id": binding_id}), utcnow()),
+        )
+    return {"status": "ok"}
+
+
+@app.get("/api/v1/preview")
+def preview_render(profile: str = Query(...), target: str = Query(...)) -> dict[str, Any]:
+    if profile not in PROFILES or target not in TARGETS:
+        raise HTTPException(400, "invalid profile/target")
+    artifact = build_artifact(profile, [target])
+    return {
+        "profile": profile,
+        "target": target,
+        "servers": artifact.get("targets", {}).get(target, {}),
+        "skills": artifact.get("skills", []),
+        "built_at": artifact.get("built_at"),
+    }
+
+
+@app.get("/api/v1/meta")
+def meta() -> dict[str, Any]:
+    return {"targets": list(TARGETS), "profiles": list(PROFILES), "version": "0.1.0"}
 
 
 @app.post("/api/v1/releases")
@@ -548,35 +615,3 @@ def list_audit(limit: int = 50) -> list[dict[str, Any]]:
         {"id": r["id"], "action": r["action"], "detail": json.loads(r["detail_json"] or "{}"), "created_at": r["created_at"]}
         for r in rows
     ]
-
-
-@app.get("/", response_class=HTMLResponse)
-def admin_ui() -> str:
-    return """<!doctype html>
-<html><head><meta charset="utf-8"><title>MCP Relay</title>
-<style>
-body{font-family:system-ui,sans-serif;margin:2rem;background:#0f1419;color:#e7ecf1}
-a{color:#6cb6ff} .card{background:#1a2332;padding:1rem 1.25rem;border-radius:8px;margin:1rem 0}
-code{background:#243044;padding:0.1rem 0.35rem;border-radius:4px}
-</style></head>
-<body>
-<h1>MCP Relay</h1>
-<p>Config control plane · targets: cursor · hermes · pi · codex · claude-code</p>
-<div class="card"><h3>Health</h3><pre id="h">loading…</pre></div>
-<div class="card"><h3>Logical servers</h3><pre id="l">loading…</pre></div>
-<div class="card"><h3>Bindings</h3><pre id="b">loading…</pre></div>
-<div class="card"><h3>Devices</h3><pre id="d">loading…</pre></div>
-<div class="card"><h3>Skill packs</h3><pre id="s">loading…</pre></div>
-<div class="card"><h3>Audit</h3><pre id="a">loading…</pre></div>
-<script>
-async function j(u){const r=await fetch(u);return r.json()}
-(async()=>{
-  h.textContent=JSON.stringify(await j('/health'),null,2);
-  l.textContent=JSON.stringify(await j('/api/v1/logical-servers'),null,2);
-  b.textContent=JSON.stringify(await j('/api/v1/bindings'),null,2);
-  d.textContent=JSON.stringify(await j('/api/v1/devices'),null,2);
-  s.textContent=JSON.stringify(await j('/api/v1/skill-packs'),null,2);
-  a.textContent=JSON.stringify(await j('/api/v1/audit'),null,2);
-})()
-</script>
-</body></html>"""

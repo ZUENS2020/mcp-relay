@@ -6,7 +6,8 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
-      - "127.0.0.1:8740:8740"
+      # LAN admin UI: http://127.0.0.1:8740  · Tunnel still points at host:8740
+      - "8740:8740"
     environment:
       - RELAY_DATA=/data
       - RELAY_CONFIG_REPO=/config-repo
