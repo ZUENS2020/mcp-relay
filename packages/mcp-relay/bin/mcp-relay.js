@@ -32,6 +32,7 @@ function help() {
   mcp-relay watch --daemon       # 后台运行（日志 ~/.mcp-relay/logs/watch.log）
   mcp-relay daemon status [name] # 查看后台进程状态（默认 watch）
   mcp-relay daemon stop [name]   # 停止后台进程
+  mcp-relay autostart [--enable|--disable|--status]  # 开机自启（systemd/launchd/计划任务）
 
 默认同步（live）：先备份本地 MCP → 服务端为空则上传 → 再下发配置。
 connect/watch 默认每 6h 检查 npm 新版本并自动升级（可用 config set auto_update false 关闭）。
@@ -124,6 +125,15 @@ async function main() {
   if (cmd === "daemon") {
     runDaemonControl(argv[1], argv[2]);
     return;
+  }
+
+  if (cmd === "autostart") {
+    const mode = hasFlag(argv, "--disable")
+      ? "disable"
+      : hasFlag(argv, "--status")
+      ? "status"
+      : "enable";
+    process.exit(autostartControl(mode));
   }
 
   if (cmd === "config") {
@@ -298,6 +308,138 @@ function runDaemonControl(sub, name) {
   }
   console.error("用法: mcp-relay daemon stop|status [watch|connect]");
   process.exit(2);
+}
+
+/**
+ * Install/remove OS autostart for `mcp-relay watch`:
+ *   linux  -> systemd user unit  (~/.config/systemd/user/mcp-relay-watch.service)
+ *   darwin -> launchd LaunchAgent (~/Library/LaunchAgents/com.zuens2020.mcp-relay.plist)
+ *   win32  -> scheduled task (schtasks /sc onlogon, name mcp-relay-agent)
+ */
+function autostartControl(mode) {
+  const fs = require("fs");
+  const os = require("os");
+  const home = os.homedir();
+  const relayRoot = path.join(home, ".mcp-relay");
+  const logsDir = path.join(relayRoot, "logs");
+  const execPath = process.execPath;
+  const script = __filename;
+
+  if (process.platform === "linux") {
+    const dir = path.join(home, ".config", "systemd", "user");
+    const unitName = "mcp-relay-watch.service";
+    const unit = path.join(dir, unitName);
+    if (mode === "status") {
+      const en = spawnSync("systemctl", ["--user", "is-enabled", unitName], { encoding: "utf8" });
+      const act = spawnSync("systemctl", ["--user", "is-active", unitName], { encoding: "utf8" });
+      console.log(`autostart: ${en.stdout.trim() || "not-installed"} / ${act.stdout.trim()}`);
+      return 0;
+    }
+    if (mode === "disable") {
+      spawnSync("systemctl", ["--user", "disable", unitName]);
+      try { fs.unlinkSync(unit); } catch (e) {}
+      console.log("已关闭开机自启（systemd user: mcp-relay-watch）");
+      return 0;
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    const body = `[Unit]\nDescription=MCP Relay Watch Agent\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nExecStart="${execPath}" "${script}" watch\nRestart=always\nRestartSec=10\n\n[Install]\nWantedBy=default.target\n`;
+    fs.writeFileSync(unit, body, { mode: 0o644 });
+    spawnSync("systemctl", ["--user", "daemon-reload"]);
+    const r = spawnSync("systemctl", ["--user", "enable", unitName]);
+    if (r.status !== 0) {
+      console.error((r.stderr || "").toString() || `systemctl enable 失败 (${r.status})`);
+      return 1;
+    }
+    console.log("已启用开机自启（systemd user: mcp-relay-watch）");
+    return 0;
+  }
+
+  if (process.platform === "darwin") {
+    const dir = path.join(home, "Library", "LaunchAgents");
+    const label = "com.zuens2020.mcp-relay";
+    const plist = path.join(dir, `${label}.plist`);
+    const uid = process.getuid ? process.getuid() : 501;
+    if (mode === "status") {
+      const r = spawnSync("launchctl", ["print", `gui/${uid}/${label}`], { encoding: "utf8" });
+      console.log(`autostart: ${fs.existsSync(plist) ? "installed" : "not-installed"} / ${r.status === 0 ? "loaded" : "not-loaded"}`);
+      return 0;
+    }
+    if (mode === "disable") {
+      spawnSync("launchctl", ["bootout", `gui/${uid}/${label}`]);
+      try { fs.unlinkSync(plist); } catch (e) {}
+      console.log("已关闭开机自启（launchd: com.zuens2020.mcp-relay）");
+      return 0;
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(logsDir, { recursive: true });
+    const log = path.join(logsDir, "watch.log");
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${execPath}</string>
+    <string>${script}</string>
+    <string>watch</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>${log}</string>
+  <key>StandardErrorPath</key>
+  <string>${log}</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
+`;
+    fs.writeFileSync(plist, xml, { mode: 0o644 });
+    // Modern launchd: bootstrap; fall back to legacy load -w.
+    spawnSync("launchctl", ["bootout", `gui/${uid}/${label}`]);
+    const b = spawnSync("launchctl", ["bootstrap", `gui/${uid}`, plist]);
+    if (b.status !== 0) {
+      const l = spawnSync("launchctl", ["load", "-w", plist]);
+      if (l.status !== 0) {
+        console.error((b.stderr || l.stderr || "").toString() || "launchctl bootstrap/load 失败");
+        return 1;
+      }
+    }
+    console.log("已启用开机自启（launchd: com.zuens2020.mcp-relay）");
+    return 0;
+  }
+
+  if (process.platform === "win32") {
+    const task = "mcp-relay-agent";
+    if (mode === "status") {
+      const r = spawnSync("schtasks", ["/query", "/tn", task], { encoding: "utf8" });
+      console.log(`autostart: ${r.status === 0 ? "installed" : "not-installed"}`);
+      return 0;
+    }
+    if (mode === "disable") {
+      const r = spawnSync("schtasks", ["/delete", "/tn", task, "/f"]);
+      console.log(r.status === 0 ? "已关闭开机自启（计划任务: mcp-relay-agent）" : "计划任务不存在或删除失败");
+      return 0;
+    }
+    const tr = `"${execPath}" "${script}" watch`;
+    const r = spawnSync("schtasks", ["/create", "/tn", task, "/tr", tr, "/sc", "onlogon", "/f"]);
+    if (r.status !== 0) {
+      console.error((r.stderr || "").toString() || `schtasks /create 失败 (${r.status})`);
+      return 1;
+    }
+    console.log("已启用开机自启（计划任务: mcp-relay-agent, onlogon）");
+    return 0;
+  }
+
+  console.error(`autostart 暂不支持平台: ${process.platform}`);
+  return 1;
 }
 
 function runDaemon(args, cfg) {
