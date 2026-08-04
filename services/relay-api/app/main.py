@@ -87,7 +87,10 @@ def init_db() -> None:
               agent_version TEXT,
               last_sync_at TEXT,
               last_release_id TEXT,
-              created_at TEXT NOT NULL
+              created_at TEXT NOT NULL,
+              agent_config_json TEXT DEFAULT '{}',
+              detected_json TEXT DEFAULT '[]',
+              last_seen_at TEXT
             );
             CREATE TABLE IF NOT EXISTS releases (
               id TEXT PRIMARY KEY,
@@ -112,6 +115,120 @@ def init_db() -> None:
             );
             """
         )
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(devices)").fetchall()}
+        if "agent_config_json" not in cols:
+            conn.execute("ALTER TABLE devices ADD COLUMN agent_config_json TEXT DEFAULT '{}'")
+        if "detected_json" not in cols:
+            conn.execute("ALTER TABLE devices ADD COLUMN detected_json TEXT DEFAULT '[]'")
+        if "last_seen_at" not in cols:
+            conn.execute("ALTER TABLE devices ADD COLUMN last_seen_at TEXT")
+
+
+def device_dict(r: sqlite3.Row) -> dict[str, Any]:
+    keys = set(r.keys())
+    return {
+        "device_id": r["device_id"],
+        "profile": r["profile"],
+        "targets": json.loads(r["targets_json"] or "[]"),
+        "hostname": r["hostname"],
+        "agent_version": r["agent_version"],
+        "last_sync_at": r["last_sync_at"],
+        "last_release_id": r["last_release_id"],
+        "created_at": r["created_at"],
+        "agent_config": json.loads(r["agent_config_json"] or "{}") if "agent_config_json" in keys else {},
+        "detected": json.loads(r["detected_json"] or "[]") if "detected_json" in keys else [],
+        "last_seen_at": r["last_seen_at"] if "last_seen_at" in keys else None,
+    }
+
+
+def filter_servers_for_agent(
+    servers: dict[str, Any],
+    agent_entry: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not agent_entry:
+        return servers
+    if agent_entry.get("enabled") is False:
+        return {}
+    # Full mcpServers document pinned on the device wins over binding flags.
+    pinned = agent_entry.get("mcp_servers")
+    if isinstance(pinned, dict):
+        return {str(k): (v if isinstance(v, dict) else {}) for k, v in pinned.items()}
+    flags = agent_entry.get("servers") or {}
+    if not flags:
+        return servers
+    out: dict[str, Any] = {}
+    for sid, cfg in servers.items():
+        if sid in flags and flags[sid] is False:
+            continue
+        out[sid] = cfg
+    return out
+
+
+def build_artifact(profile: str, targets: list[str], agent_config: dict[str, Any] | None = None) -> dict[str, Any]:
+    with db() as conn:
+        logicals = {
+            r["id"]: {
+                "id": r["id"],
+                "display_name": r["display_name"],
+                "transport": r["transport"],
+                "default": json.loads(r["default_json"]),
+                "tags": json.loads(r["tags_json"] or "[]"),
+            }
+            for r in conn.execute("SELECT * FROM logical_servers").fetchall()
+        }
+        bindings = [dict(r) for r in conn.execute("SELECT * FROM bindings WHERE profile=?", (profile,)).fetchall()]
+        packs = [dict(r) for r in conn.execute("SELECT * FROM skill_packs").fetchall()]
+
+    by_target: dict[str, dict[str, Any]] = {t: {} for t in targets if t in TARGETS}
+    for b in bindings:
+        t = b["target"]
+        if t not in by_target:
+            continue
+        if not b["enabled"]:
+            continue
+        lid = b["logical_id"]
+        if lid not in logicals:
+            continue
+        by_target[t][lid] = merge_server(logicals[lid], json.loads(b["overrides_json"] or "{}"))
+
+    agent_config = agent_config or {}
+    for t in list(by_target.keys()):
+        by_target[t] = filter_servers_for_agent(by_target[t], agent_config.get(t))
+
+    skill_out = []
+    for p in packs:
+        profiles = json.loads(p["profiles_json"] or "[]")
+        if profile not in profiles and profiles:
+            continue
+        tmap = json.loads(p["targets_json"] or "{}")
+        skill_out.append(
+            {
+                "id": p["id"],
+                "version": p["version"],
+                "path": p["path"],
+                "targets": {k: v for k, v in tmap.items() if k in by_target or not targets},
+            }
+        )
+
+    return {
+        "profile": profile,
+        "targets": by_target,
+        "skills": skill_out,
+        "built_at": utcnow(),
+    }
+
+
+def build_artifact_for_device(device: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(device, sqlite3.Row):
+        d = device_dict(device)
+    else:
+        d = device
+    return build_artifact(d["profile"], d["targets"], d.get("agent_config") or {})
+
+
+def known_logical_ids() -> list[str]:
+    with db() as conn:
+        return [r["id"] for r in conn.execute("SELECT id FROM logical_servers ORDER BY id").fetchall()]
 
 
 def seed_from_config_repo() -> None:
@@ -189,56 +306,6 @@ def merge_server(logical: dict[str, Any], overrides: dict[str, Any]) -> dict[str
     return out
 
 
-def build_artifact(profile: str, targets: list[str]) -> dict[str, Any]:
-    with db() as conn:
-        logicals = {
-            r["id"]: {
-                "id": r["id"],
-                "display_name": r["display_name"],
-                "transport": r["transport"],
-                "default": json.loads(r["default_json"]),
-                "tags": json.loads(r["tags_json"] or "[]"),
-            }
-            for r in conn.execute("SELECT * FROM logical_servers").fetchall()
-        }
-        bindings = [dict(r) for r in conn.execute("SELECT * FROM bindings WHERE profile=?", (profile,)).fetchall()]
-        packs = [dict(r) for r in conn.execute("SELECT * FROM skill_packs").fetchall()]
-
-    by_target: dict[str, dict[str, Any]] = {t: {} for t in targets if t in TARGETS}
-    for b in bindings:
-        t = b["target"]
-        if t not in by_target:
-            continue
-        if not b["enabled"]:
-            continue
-        lid = b["logical_id"]
-        if lid not in logicals:
-            continue
-        by_target[t][lid] = merge_server(logicals[lid], json.loads(b["overrides_json"] or "{}"))
-
-    skill_out = []
-    for p in packs:
-        profiles = json.loads(p["profiles_json"] or "[]")
-        if profile not in profiles and profiles:
-            continue
-        tmap = json.loads(p["targets_json"] or "{}")
-        skill_out.append(
-            {
-                "id": p["id"],
-                "version": p["version"],
-                "path": p["path"],
-                "targets": {k: v for k, v in tmap.items() if k in by_target or not targets},
-            }
-        )
-
-    return {
-        "profile": profile,
-        "targets": by_target,
-        "skills": skill_out,
-        "built_at": utcnow(),
-    }
-
-
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI(title="MCP Relay", version="0.1.0")
@@ -289,12 +356,19 @@ def require_device(
 # --- Agent API ---
 
 
+class DetectedAgent(BaseModel):
+    id: str
+    path: str | None = None
+    present: bool = True
+
+
 class RegisterRequest(BaseModel):
     device_id: str | None = None
     profile: str
     targets: list[str] = Field(default_factory=list)
     hostname: str | None = None
     agent_version: str = "0.1.0"
+    detected: list[DetectedAgent] = Field(default_factory=list)
 
 
 @app.post("/api/v1/devices/register")
@@ -302,64 +376,112 @@ def register_device(body: RegisterRequest) -> dict[str, Any]:
     if body.profile not in PROFILES:
         raise HTTPException(400, f"invalid profile: {body.profile}")
     targets = [t for t in body.targets if t in TARGETS]
+    detected = [
+        {"id": d.id, "path": d.path, "present": d.present}
+        for d in body.detected
+        if d.id in TARGETS
+    ]
+    if not targets and detected:
+        targets = [d["id"] for d in detected if d.get("present", True)]
     device_id = body.device_id or f"{body.profile}-{secrets.token_hex(6)}"
     token = secrets.token_urlsafe(32)
+    now = utcnow()
     with db() as conn:
         existing = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
         if existing:
+            # keep agent_config; refresh detection + targets (union with existing if empty report)
+            prev_targets = json.loads(existing["targets_json"] or "[]")
+            if not targets:
+                targets = prev_targets
             conn.execute(
-                "UPDATE devices SET profile=?, targets_json=?, hostname=?, agent_version=? WHERE device_id=?",
-                (body.profile, json.dumps(targets), body.hostname, body.agent_version, device_id),
+                """UPDATE devices SET profile=?, targets_json=?, hostname=?, agent_version=?,
+                   detected_json=?, last_seen_at=? WHERE device_id=?""",
+                (
+                    body.profile,
+                    json.dumps(targets),
+                    body.hostname,
+                    body.agent_version,
+                    json.dumps(detected),
+                    now,
+                    device_id,
+                ),
             )
             token = existing["device_token"]
         else:
+            # seed agent_config for each target
+            agent_cfg = {t: {"enabled": True, "servers": {}} for t in targets}
             conn.execute(
-                "INSERT INTO devices(device_id, device_token, profile, targets_json, hostname, agent_version, created_at) VALUES (?,?,?,?,?,?,?)",
-                (device_id, token, body.profile, json.dumps(targets), body.hostname, body.agent_version, utcnow()),
+                """INSERT INTO devices(device_id, device_token, profile, targets_json, hostname,
+                   agent_version, created_at, agent_config_json, detected_json, last_seen_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    device_id,
+                    token,
+                    body.profile,
+                    json.dumps(targets),
+                    body.hostname,
+                    body.agent_version,
+                    now,
+                    json.dumps(agent_cfg),
+                    json.dumps(detected),
+                    now,
+                ),
             )
         conn.execute(
             "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
-            ("device.register", json.dumps({"device_id": device_id, "targets": targets}), utcnow()),
+            ("device.register", json.dumps({"device_id": device_id, "targets": targets, "detected": detected}), now),
         )
     return {"device_id": device_id, "device_token": token, "profile": body.profile, "targets": targets}
 
 
 @app.get("/api/v1/devices/me")
 def device_me(device: sqlite3.Row = Depends(require_device)) -> dict[str, Any]:
-    return {
-        "device_id": device["device_id"],
-        "profile": device["profile"],
-        "targets": json.loads(device["targets_json"] or "[]"),
-        "hostname": device["hostname"],
-        "agent_version": device["agent_version"],
-        "last_sync_at": device["last_sync_at"],
-        "last_release_id": device["last_release_id"],
-    }
+    return device_dict(device)
 
 
 @app.get("/api/v1/releases/latest")
 def latest_release(
-    profile: str = Query(...),
+    profile: str | None = Query(None),
     targets: str = Query(""),
     device: sqlite3.Row = Depends(require_device),
 ) -> dict[str, Any]:
-    tlist = [t.strip() for t in targets.split(",") if t.strip()] or json.loads(device["targets_json"] or "[]")
-    artifact = build_artifact(profile, tlist)
+    """Build device-scoped artifact (bindings ∩ device agent_config)."""
+    d = device_dict(device)
+    if profile and profile != d["profile"]:
+        # allow override for debugging but default to device profile
+        d["profile"] = profile
+    tlist = [t.strip() for t in targets.split(",") if t.strip()]
+    if tlist:
+        d["targets"] = [t for t in tlist if t in TARGETS]
+    artifact = build_artifact_for_device(d)
     etag = secrets.token_hex(8)
-    # reuse latest if identical profile+targets content
     with db() as conn:
-        row = conn.execute(
-            "SELECT * FROM releases ORDER BY created_at DESC LIMIT 1"
-        ).fetchone()
+        row = conn.execute("SELECT * FROM releases ORDER BY created_at DESC LIMIT 1").fetchone()
         if row:
             prev = json.loads(row["artifact_json"])
-            if prev.get("profile") == profile and prev.get("targets") == artifact["targets"] and prev.get("skills") == artifact["skills"]:
-                return {"id": row["id"], "etag": row["etag"], "created_at": row["created_at"], "changelog": row["changelog"], "artifact": prev}
+            if (
+                prev.get("profile") == artifact["profile"]
+                and prev.get("targets") == artifact["targets"]
+                and prev.get("skills") == artifact["skills"]
+                and prev.get("device_id") == d["device_id"]
+            ):
+                return {
+                    "id": row["id"],
+                    "etag": row["etag"],
+                    "created_at": row["created_at"],
+                    "changelog": row["changelog"],
+                    "artifact": prev,
+                }
 
         rid = f"rel-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{etag[:4]}"
+        artifact["device_id"] = d["device_id"]
         conn.execute(
             "INSERT INTO releases(id, changelog, created_at, etag, artifact_json) VALUES (?,?,?,?,?)",
-            (rid, "auto", utcnow(), etag, json.dumps(artifact)),
+            (rid, f"device:{d['device_id']}", utcnow(), etag, json.dumps(artifact)),
+        )
+        conn.execute(
+            "UPDATE devices SET last_seen_at=? WHERE device_id=?",
+            (utcnow(), d["device_id"]),
         )
     return {"id": rid, "etag": etag, "created_at": utcnow(), "changelog": "auto", "artifact": artifact}
 
@@ -559,20 +681,353 @@ def create_release(changelog: str = "manual") -> dict[str, Any]:
 @app.get("/api/v1/devices")
 def list_devices() -> list[dict[str, Any]]:
     with db() as conn:
-        rows = conn.execute("SELECT device_id, profile, targets_json, hostname, agent_version, last_sync_at, last_release_id, created_at FROM devices").fetchall()
-    return [
-        {
-            "device_id": r["device_id"],
-            "profile": r["profile"],
-            "targets": json.loads(r["targets_json"] or "[]"),
-            "hostname": r["hostname"],
-            "agent_version": r["agent_version"],
-            "last_sync_at": r["last_sync_at"],
-            "last_release_id": r["last_release_id"],
-            "created_at": r["created_at"],
+        rows = conn.execute("SELECT * FROM devices ORDER BY last_seen_at DESC, created_at DESC").fetchall()
+    return [device_dict(r) for r in rows]
+
+
+@app.get("/api/v1/devices/{device_id}")
+def get_device(device_id: str) -> dict[str, Any]:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "device not found")
+    d = device_dict(row)
+    # enrichment: binding defaults + effective servers per agent
+    artifact = build_artifact_for_device(d)
+    logicals = list_logical()
+    binding_defaults: dict[str, list[str]] = {}
+    with db() as conn:
+        for t in TARGETS:
+            rows = conn.execute(
+                "SELECT logical_id FROM bindings WHERE profile=? AND target=? AND enabled=1",
+                (d["profile"], t),
+            ).fetchall()
+            binding_defaults[t] = [r["logical_id"] for r in rows]
+    agents_view = []
+    for t in d["targets"]:
+        ac = (d.get("agent_config") or {}).get(t) or {"enabled": True, "servers": {}}
+        effective_map = (artifact.get("targets") or {}).get(t, {}) or {}
+        agents_view.append(
+            {
+                "id": t,
+                "enabled": ac.get("enabled", True),
+                "servers": ac.get("servers") or {},
+                "mcp_servers": ac.get("mcp_servers"),
+                "binding_defaults": binding_defaults.get(t, []),
+                "effective_servers": list(effective_map.keys()),
+                "mcp_document": {"mcpServers": effective_map},
+                "detected": next((x for x in (d.get("detected") or []) if x.get("id") == t), None),
+            }
+        )
+    # also show detected-but-not-in-targets
+    for det in d.get("detected") or []:
+        if det.get("id") in d["targets"]:
+            continue
+        if det.get("id") not in TARGETS:
+            continue
+        agents_view.append(
+            {
+                "id": det["id"],
+                "enabled": False,
+                "servers": {},
+                "mcp_servers": None,
+                "binding_defaults": binding_defaults.get(det["id"], []),
+                "effective_servers": [],
+                "mcp_document": {"mcpServers": {}},
+                "detected": det,
+            }
+        )
+    d["agents"] = agents_view
+    d["logical_servers"] = logicals
+    d["effective_artifact"] = artifact
+    return d
+
+
+class AgentConfigPatch(BaseModel):
+    """Per-device agent configuration."""
+
+    targets: list[str] | None = None
+    agent_config: dict[str, Any] | None = None
+
+
+def _normalize_agent_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Accept UI/API shapes: flags and/or full mcp document."""
+    cur: dict[str, Any] = {"enabled": True, "servers": {}}
+    if "enabled" in entry:
+        cur["enabled"] = bool(entry["enabled"])
+    if "servers" in entry and isinstance(entry["servers"], dict):
+        cur["servers"] = {str(k): bool(v) for k, v in entry["servers"].items()}
+
+    mcp_servers = entry.get("mcp_servers")
+    if mcp_servers is None and isinstance(entry.get("mcpServers"), dict):
+        mcp_servers = entry["mcpServers"]
+    if mcp_servers is None and isinstance(entry.get("mcp_document"), dict):
+        doc = entry["mcp_document"]
+        mcp_servers = doc.get("mcpServers") if "mcpServers" in doc else doc
+    if isinstance(mcp_servers, dict):
+        cleaned = {str(k): (v if isinstance(v, dict) else {}) for k, v in mcp_servers.items()}
+        cur["mcp_servers"] = cleaned
+        # keep flags in sync with document keys
+        flags = dict(cur.get("servers") or {})
+        for sid in cleaned:
+            flags[sid] = True
+        cur["servers"] = flags
+    elif "mcp_servers" in entry and entry["mcp_servers"] is None:
+        # explicit clear → fall back to binding flags
+        cur.pop("mcp_servers", None)
+    return cur
+
+
+@app.patch("/api/v1/devices/{device_id}/agents")
+def patch_device_agents(device_id: str, body: AgentConfigPatch) -> dict[str, Any]:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "device not found")
+        d = device_dict(row)
+        targets = d["targets"]
+        cfg = dict(d.get("agent_config") or {})
+        if body.targets is not None:
+            targets = [t for t in body.targets if t in TARGETS]
+        if body.agent_config is not None:
+            for agent, entry in body.agent_config.items():
+                if agent not in TARGETS:
+                    continue
+                if not isinstance(entry, dict):
+                    raise HTTPException(400, f"agent_config.{agent} must be object")
+                prev = dict(cfg.get(agent) or {"enabled": True, "servers": {}})
+                nxt = _normalize_agent_entry(entry)
+                # merge: preserve previous mcp_servers unless explicitly provided/cleared
+                if "mcp_servers" not in entry and "mcpServers" not in entry and "mcp_document" not in entry:
+                    if "mcp_servers" in prev:
+                        nxt["mcp_servers"] = prev["mcp_servers"]
+                if "enabled" not in entry:
+                    nxt["enabled"] = prev.get("enabled", True)
+                if "servers" in entry:
+                    servers = dict(prev.get("servers") or {})
+                    servers.update(nxt.get("servers") or {})
+                    nxt["servers"] = servers
+                elif "mcp_servers" not in nxt:
+                    nxt["servers"] = prev.get("servers") or {}
+                cfg[agent] = nxt
+                if nxt.get("enabled", True) and agent not in targets:
+                    targets.append(agent)
+        conn.execute(
+            "UPDATE devices SET targets_json=?, agent_config_json=? WHERE device_id=?",
+            (json.dumps(targets), json.dumps(cfg), device_id),
+        )
+        conn.execute(
+            "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
+            ("device.agents.patch", json.dumps({"device_id": device_id, "targets": targets, "agent_config": cfg}), utcnow()),
+        )
+    return get_device(device_id)
+
+
+class BootstrapIn(BaseModel):
+    mcp_document: dict[str, Any] | None = None
+    mcp_servers: dict[str, Any] | None = None
+    mcpServers: dict[str, Any] | None = None
+
+
+def _extract_mcp_servers(body: BootstrapIn) -> dict[str, Any]:
+    if isinstance(body.mcp_servers, dict):
+        return body.mcp_servers
+    if isinstance(body.mcpServers, dict):
+        return body.mcpServers
+    if isinstance(body.mcp_document, dict):
+        doc = body.mcp_document
+        if isinstance(doc.get("mcpServers"), dict):
+            return doc["mcpServers"]
+        # allow bare servers map as document
+        if doc and all(isinstance(v, dict) for v in doc.values()):
+            return doc
+    raise HTTPException(400, "mcp_document.mcpServers (or mcp_servers) required")
+
+
+@app.post("/api/v1/devices/me/agents/{target}/bootstrap")
+def bootstrap_agent(
+    target: str,
+    body: BootstrapIn,
+    device: sqlite3.Row = Depends(require_device),
+) -> dict[str, Any]:
+    """Upload local mcpServers when the device agent has no pinned config yet."""
+    if target not in TARGETS:
+        raise HTTPException(400, f"invalid target: {target}")
+    servers = _extract_mcp_servers(body)
+    cleaned = {str(k): (v if isinstance(v, dict) else {}) for k, v in servers.items()}
+    d = device_dict(device)
+    cfg = dict(d.get("agent_config") or {})
+    prev = dict(cfg.get(target) or {})
+    existing = prev.get("mcp_servers")
+    if isinstance(existing, dict) and len(existing) > 0:
+        return {
+            "status": "skipped",
+            "reason": "already_configured",
+            "device_id": d["device_id"],
+            "target": target,
+            "server_count": len(existing),
         }
-        for r in rows
-    ]
+    entry = {
+        "enabled": True,
+        "servers": {sid: True for sid in cleaned},
+        "mcp_servers": cleaned,
+    }
+    cfg[target] = entry
+    targets = list(d["targets"])
+    if target not in targets:
+        targets.append(target)
+    with db() as conn:
+        conn.execute(
+            "UPDATE devices SET targets_json=?, agent_config_json=?, last_seen_at=? WHERE device_id=?",
+            (json.dumps(targets), json.dumps(cfg), utcnow(), d["device_id"]),
+        )
+        conn.execute(
+            "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
+            (
+                "device.agents.bootstrap",
+                json.dumps({"device_id": d["device_id"], "target": target, "server_count": len(cleaned)}),
+                utcnow(),
+            ),
+        )
+    return {
+        "status": "ok",
+        "device_id": d["device_id"],
+        "target": target,
+        "server_count": len(cleaned),
+        "servers": list(cleaned.keys()),
+    }
+
+
+class ScriptBody(BaseModel):
+    script: str
+    format: str | None = None  # yaml | dsl | auto
+    dry_run: bool = True
+    device_ids: list[str] | None = None  # optional filter
+
+
+@app.post("/api/v1/scripts/parse")
+def scripts_parse(body: ScriptBody) -> dict[str, Any]:
+    from .script_parser import parse_script
+
+    script, errors = parse_script(body.script, body.format)
+    if errors:
+        return {
+            "ok": False,
+            "errors": [{"line": e.line, "message": e.message} for e in errors],
+        }
+    assert script is not None
+    return {
+        "ok": True,
+        "version": script.version,
+        "source": script.source,
+        "ops_count": len(script.ops),
+        "ops": [
+            {
+                "match": {
+                    "profile": op.match.profile,
+                    "device_id": op.match.device_id,
+                    "hostname_contains": op.match.hostname_contains,
+                },
+                "set_agents": op.set_agents,
+                "agents": {
+                    k: {
+                        "enabled": v.enabled,
+                        "enable": v.enable,
+                        "disable": v.disable,
+                        "enable_all": v.enable_all,
+                        "disable_all": v.disable_all,
+                    }
+                    for k, v in op.agents.items()
+                },
+            }
+            for op in script.ops
+        ],
+    }
+
+
+@app.post("/api/v1/scripts/apply")
+def scripts_apply(body: ScriptBody) -> dict[str, Any]:
+    from .script_parser import apply_script_to_device_config, parse_script
+
+    script, errors = parse_script(body.script, body.format)
+    if errors:
+        raise HTTPException(400, {"errors": [{"line": e.line, "message": e.message} for e in errors]})
+    assert script is not None
+    known = known_logical_ids()
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM devices").fetchall()
+    results = []
+    applied = 0
+    for row in rows:
+        d = device_dict(row)
+        if body.device_ids and d["device_id"] not in body.device_ids:
+            continue
+        new_cfg, new_targets, changed = apply_script_to_device_config(
+            d, d.get("agent_config") or {}, script, known
+        )
+        if not changed:
+            continue
+        entry = {
+            "device_id": d["device_id"],
+            "hostname": d.get("hostname"),
+            "profile": d["profile"],
+            "before": {"targets": d["targets"], "agent_config": d.get("agent_config") or {}},
+            "after": {"targets": new_targets, "agent_config": new_cfg},
+        }
+        results.append(entry)
+        if not body.dry_run:
+            with db() as conn:
+                conn.execute(
+                    "UPDATE devices SET targets_json=?, agent_config_json=? WHERE device_id=?",
+                    (json.dumps(new_targets), json.dumps(new_cfg), d["device_id"]),
+                )
+            applied += 1
+    if not body.dry_run and results:
+        with db() as conn:
+            conn.execute(
+                "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
+                (
+                    "script.apply",
+                    json.dumps({"matched": len(results), "dry_run": False, "devices": [r["device_id"] for r in results]}),
+                    utcnow(),
+                ),
+            )
+    return {
+        "ok": True,
+        "dry_run": body.dry_run,
+        "matched": len(results),
+        "applied": applied if not body.dry_run else 0,
+        "results": results,
+    }
+
+
+@app.get("/api/v1/scripts/examples")
+def scripts_examples() -> dict[str, str]:
+    return {
+        "yaml": """version: 1
+ops:
+  - match:
+      profile: windows-desktop
+    agents:
+      cursor:
+        enable: [trek, nowledge-mem, drawio]
+        disable: [jeb]
+      pi:
+        enabled: true
+        enable: [trek]
+  - match:
+      profile: nec-server
+    agents:
+      hermes:
+        enable_all: true
+""",
+        "dsl": """# batch enable MCP servers on all windows-desktop devices
+enable profile:windows-desktop agent:cursor trek nowledge-mem drawio
+disable profile:windows-desktop agent:cursor jeb
+enable_all profile:nec-server agent:hermes
+set profile:windows-desktop agents=cursor,pi,codex,claude-code
+""",
+    }
 
 
 @app.get("/api/v1/releases/{release_id}/diff/{prev_id}")
