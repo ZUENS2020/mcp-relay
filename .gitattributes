@@ -1,0 +1,29 @@
+# Normalize line endings across Windows (NAS/Z:) and Linux checkouts.
+* text=auto
+
+# Shell scripts must stay LF even on Windows checkouts.
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Binary files — never touch.
+*.exe binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.zip binary
+*.db binary
+*.sqlite binary
+*.sqlite-shm binary
+*.sqlite-wal binary
+
+# Go / Python / JS / configs — auto (LF in repo).
+*.go text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.example text eol=lf
