@@ -47,8 +47,13 @@ mcp-relay doctor
 mcp-relay config get
 mcp-relay config set url https://example.com
 mcp-relay register
-mcp-relay version
+mcp-relay connect          # WebSocket 长连接（保存即推）
+mcp-relay watch            # connect + 定时 sync 兜底
+  mcp-relay update [--check]   # 检查/升级 npm 包（watch/connect 默认每 6h 自动升级）
+  mcp-relay version
 ```
+
+配置项：`mcp-relay config set auto_update true|false`（默认开启）。
 
 ## 架构
 
@@ -61,10 +66,38 @@ mcp-relay version
 | `config-repo/` | JSON | logical servers + bindings |
 
 ```
-设备 ──sync──▶ Relay API ──artifact──▶ 本机 Agent mcp.json
+设备 ──connect/ws──▶ Relay API ──push.apply──▶ Agent 写本地 mcp.json
+       sync 兜底 ▲         │
+管理台：设备在线状态 | 推送记录 | Agent 配置
                  ▲
-管理台：设备 | Agent | 整份 mcp.json
+Cursor 等 ── MCP /mcp ── 读写设备配置、触发推送
 ```
+
+### 实时推送
+
+- 设备运行 `mcp-relay connect`（或 `watch`，内含 WS）后，管理台显示**绿点在线**
+- 在管理台保存 Agent 配置会**自动推送**；离线设备排队，上线后补发
+- 侧栏「**推送记录**」可查看 `queued → sent → acked/failed` 状态
+
+### Relay MCP 管理接口
+
+服务端设置 `RELAY_MCP_ADMIN_TOKEN` 后，在 Cursor 等客户端添加 Streamable HTTP MCP：
+
+```json
+{
+  "mcpServers": {
+    "mcp-relay": {
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <RELAY_MCP_ADMIN_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+可用工具：`relay_list_devices`、`relay_get_device`、`relay_patch_device_agents`（保存并推送）、`relay_list_push_deliveries`、`relay_apply_script` 等。
+
 
 ## 部署（服务端）
 
@@ -83,6 +116,7 @@ bash scripts/deploy-nec.sh
 # API
 cd services/relay-api
 pip install -r requirements.txt
+pip install -r requirements-mcp.txt   # optional: /mcp admin tools
 export RELAY_DATA=../../data RELAY_CONFIG_REPO=../../config-repo SKILLS_ROOT=../../skills-repo
 uvicorn app.main:app --host 127.0.0.1 --port 8740
 

@@ -15,9 +15,10 @@ import (
 	"github.com/zuens2020/mcp-relay/agent/internal/fsutil"
 	"github.com/zuens2020/mcp-relay/agent/internal/paths"
 	syncer "github.com/zuens2020/mcp-relay/agent/internal/sync"
+	"github.com/zuens2020/mcp-relay/agent/internal/wsclient"
 )
 
-const agentVersion = "0.2.0"
+const agentVersion = "0.2.3"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -73,7 +74,24 @@ func main() {
 		must(doRegister(res, cfg))
 	case "sync":
 		must(doSync(res, cfg, *skillsRoot))
+	case "connect":
+		cl := syncer.New(cfg, res)
+		for {
+			if err := wsclient.Run(cl); err != nil {
+				fmt.Fprintf(os.Stderr, "connect error: %v\n", err)
+			}
+			time.Sleep(5 * time.Second)
+		}
 	case "watch":
+		cl := syncer.New(cfg, res)
+		go func() {
+			for {
+				if err := wsclient.Run(cl); err != nil {
+					fmt.Fprintf(os.Stderr, "ws error: %v\n", err)
+				}
+				time.Sleep(5 * time.Second)
+			}
+		}()
 		for {
 			if err := doSync(res, cfg, *skillsRoot); err != nil {
 				fmt.Fprintf(os.Stderr, "sync error: %v\n", err)
@@ -99,7 +117,10 @@ Commands:
   register [--relay-url URL]
   sync [--dry-run|--sandbox] [--skills-root DIR]
        backup local MCP configs, bootstrap empty server configs, then pull
+  connect
+       maintain WebSocket for push delivery
   watch [--interval 15m]
+       WebSocket push + periodic sync fallback
   backup list
   backup restore --latest
   init-sandbox

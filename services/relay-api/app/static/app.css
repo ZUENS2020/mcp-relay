@@ -483,6 +483,24 @@ tr:last-child td { border-bottom: 0; }
   padding: 0 var(--sp-4) var(--sp-4);
 }
 
+.device-row-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.presence-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.presence-dot.online { background: #16a34a; box-shadow: 0 0 0 2px color-mix(in srgb, #16a34a 25%, transparent); }
+.presence-dot.offline { background: var(--zinc-400); }
+.push-badge.push-ok, .push-badge.acked { background: color-mix(in srgb, #16a34a 18%, var(--bg-1)); color: #15803d; }
+.push-badge.push-fail, .push-badge.failed { background: color-mix(in srgb, #dc2626 15%, var(--bg-1)); color: #b91c1c; }
+.push-badge.push-pending, .push-badge.queued, .push-badge.sent { background: color-mix(in srgb, #ca8a04 18%, var(--bg-1)); color: #a16207; }
+
 .device-header {
   margin-bottom: var(--sp-3);
 }

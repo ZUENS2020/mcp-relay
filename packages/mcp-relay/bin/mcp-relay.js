@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-const { spawnSync } = require("child_process");
+const { spawn, spawnSync } = require("child_process");
 const path = require("path");
 const {
   loadConfig,
@@ -10,6 +10,11 @@ const {
   ensureRelayRoot,
 } = require("../lib/config");
 const { resolveBinary } = require("../lib/bin");
+const {
+  checkAndMaybeUpdate,
+  startBackgroundUpdater,
+  installedVersion,
+} = require("../lib/update");
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -22,12 +27,16 @@ function help() {
   mcp-relay config set <key> <value>
   mcp-relay config get [key]
   mcp-relay config path
-  mcp-relay doctor|detect|register|sync|watch|backup|version [...]
+  mcp-relay update [--check] [--force]
+  mcp-relay doctor|detect|register|sync|connect|watch|backup|version [...]
 
 默认同步（live）：先备份本地 MCP → 服务端为空则上传 → 再下发配置。
+connect/watch 默认每 6h 检查 npm 新版本并自动升级（可用 config set auto_update false 关闭）。
 
 环境变量:
   RELAY_URL / RELAY_MODE / RELAY_ROOT / MCP_RELAY_BIN
+  MCP_RELAY_AUTO_UPDATE=0|1
+  MCP_RELAY_UPDATE_INTERVAL_MS
 `);
 }
 
@@ -35,6 +44,10 @@ function parseFlag(args, name) {
   const i = args.indexOf(name);
   if (i < 0) return null;
   return args[i + 1] || null;
+}
+
+function hasFlag(args, name) {
+  return args.includes(name);
 }
 
 async function main() {
@@ -53,12 +66,44 @@ async function main() {
     const cfg = loadConfig();
     cfg.relay_url = url.replace(/\/$/, "");
     cfg.allow_live_writes = true;
-    cfg.agent_version = cfg.agent_version || "0.2.0";
+    cfg.auto_update = cfg.auto_update !== false;
+    cfg.agent_version = cfg.agent_version || installedVersion();
     saveConfig(cfg);
     console.log(`已写入 ${configPath()}`);
     console.log(`relay_url=${cfg.relay_url}`);
-    // run detect via binary if available
     runBinary(["detect"], cfg);
+    return;
+  }
+
+  if (cmd === "update") {
+    const checkOnly = hasFlag(argv, "--check");
+    const force = hasFlag(argv, "--force");
+    try {
+      const r = await checkAndMaybeUpdate({
+        force: true,
+        apply: !checkOnly,
+      });
+      if (checkOnly) {
+        if (r.updateAvailable) {
+          console.log(`update available: ${r.current} → ${r.latest}`);
+          process.exit(0);
+        }
+        console.log(`up to date: ${r.current}`);
+        return;
+      }
+      if (!r.updateAvailable) {
+        console.log(`已是最新版 ${r.current}`);
+        return;
+      }
+      if (r.updated) {
+        console.log(`已升级到 ${r.latest}`);
+        return;
+      }
+      console.log(`有新版本 ${r.latest}，但未应用（auto_update=false？）`);
+    } catch (e) {
+      console.error(e.message || e);
+      process.exit(1);
+    }
     return;
   }
 
@@ -82,6 +127,8 @@ async function main() {
         profile: "profile",
         "allow-live": "allow_live_writes",
         allow_live_writes: "allow_live_writes",
+        "auto-update": "auto_update",
+        auto_update: "auto_update",
       };
       const k = map[key] || key;
       console.log(cfg[k] === undefined ? "" : String(cfg[k]));
@@ -100,9 +147,11 @@ async function main() {
         profile: "profile",
         "allow-live": "allow_live_writes",
         allow_live_writes: "allow_live_writes",
+        "auto-update": "auto_update",
+        auto_update: "auto_update",
       };
       const k = map[key] || key;
-      if (k === "allow_live_writes") {
+      if (k === "allow_live_writes" || k === "auto_update") {
         cfg[k] = val === "true" || val === "1" || val === "yes";
       } else {
         cfg[k] = val;
@@ -113,7 +162,12 @@ async function main() {
     }
     if (sub === "unset") {
       const key = argv[2];
-      const map = { url: "relay_url", profile: "profile", "allow-live": "allow_live_writes" };
+      const map = {
+        url: "relay_url",
+        profile: "profile",
+        "allow-live": "allow_live_writes",
+        "auto-update": "auto_update",
+      };
       const k = map[key] || key;
       delete cfg[k];
       saveConfig(cfg);
@@ -124,10 +178,49 @@ async function main() {
     process.exit(2);
   }
 
-  // proxy to Go binary
   const cfg = loadConfig();
+
+  // Long-running: keep Node parent for npm auto-update + child agent.
+  if (cmd === "watch" || cmd === "connect") {
+    let child = null;
+    const stopUpdater = startBackgroundUpdater({
+      cfg,
+      onUpdated: () => {
+        console.error("[mcp-relay] 升级完成，重启进程以加载新版本…");
+        if (child && !child.killed) child.kill("SIGTERM");
+        const next = spawnSync(process.execPath, [__filename, ...argv], {
+          stdio: "inherit",
+          env: process.env,
+        });
+        process.exit(next.status == null ? 1 : next.status);
+      },
+    });
+    const code = await runBinaryAsync(argv, cfg, (c) => {
+      child = c;
+    });
+    stopUpdater();
+    process.exit(code);
+  }
+
+  // One-shot: opportunistic check (throttled), never block on failure.
+  if (["sync", "doctor", "register"].includes(cmd)) {
+    checkAndMaybeUpdate({ cfg, apply: false }).catch(() => {});
+  }
+
   const code = runBinary(argv, cfg);
   process.exit(code);
+}
+
+function buildPassArgs(args, cfg) {
+  const pass = [...args];
+  if (
+    cfg.relay_url &&
+    ["register", "sync", "watch", "connect", "doctor"].includes(args[0]) &&
+    !pass.includes("--relay-url")
+  ) {
+    pass.push("--relay-url", cfg.relay_url);
+  }
+  return pass;
 }
 
 function runBinary(args, cfg) {
@@ -138,24 +231,41 @@ function runBinary(args, cfg) {
     console.error(e.message);
     process.exit(1);
   }
-  const env = { ...process.env };
-  if (cfg.relay_url && !env.RELAY_URL) {
-    // Go reads config.yaml; also pass via --relay-url when register/sync
-  }
-  const pass = [...args];
-  if (
-    cfg.relay_url &&
-    ["register", "sync", "watch", "doctor"].includes(args[0]) &&
-    !pass.includes("--relay-url")
-  ) {
-    pass.push("--relay-url", cfg.relay_url);
-  }
-  const r = spawnSync(bin, pass, { stdio: "inherit", env });
+  const r = spawnSync(bin, buildPassArgs(args, cfg), {
+    stdio: "inherit",
+    env: { ...process.env },
+  });
   if (r.error) {
     console.error(r.error.message);
     return 1;
   }
   return r.status == null ? 1 : r.status;
+}
+
+function runBinaryAsync(args, cfg, onSpawn) {
+  return new Promise((resolve) => {
+    let bin;
+    try {
+      bin = resolveBinary();
+    } catch (e) {
+      console.error(e.message);
+      resolve(1);
+      return;
+    }
+    const child = spawn(bin, buildPassArgs(args, cfg), {
+      stdio: "inherit",
+      env: { ...process.env },
+    });
+    if (typeof onSpawn === "function") onSpawn(child);
+    child.on("error", (err) => {
+      console.error(err.message);
+      resolve(1);
+    });
+    child.on("exit", (code, signal) => {
+      if (signal) resolve(1);
+      else resolve(code == null ? 1 : code);
+    });
+  });
 }
 
 main().catch((e) => {

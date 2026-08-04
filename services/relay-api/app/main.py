@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -122,6 +122,21 @@ def init_db() -> None:
             conn.execute("ALTER TABLE devices ADD COLUMN detected_json TEXT DEFAULT '[]'")
         if "last_seen_at" not in cols:
             conn.execute("ALTER TABLE devices ADD COLUMN last_seen_at TEXT")
+        from .push import init_push_table
+
+        init_push_table(conn)
+
+
+def enrich_device(d: dict[str, Any], conn: sqlite3.Connection) -> dict[str, Any]:
+    from .hub import hub
+    from .push import last_push_summary, pending_count
+
+    out = dict(d)
+    did = out["device_id"]
+    out["online"] = hub.is_online(did)
+    out["pending_push_count"] = pending_count(conn, did)
+    out["last_push"] = last_push_summary(conn, did)
+    return out
 
 
 def device_dict(r: sqlite3.Row) -> dict[str, Any]:
@@ -381,18 +396,24 @@ def register_device(body: RegisterRequest) -> dict[str, Any]:
         for d in body.detected
         if d.id in TARGETS
     ]
-    if not targets and detected:
-        targets = [d["id"] for d in detected if d.get("present", True)]
+    detected_ids = [d["id"] for d in detected if d.get("present", True)]
+    # Union body targets with detected agents so stale client configs cannot drop agents.
+    for tid in detected_ids:
+        if tid not in targets:
+            targets.append(tid)
     device_id = body.device_id or f"{body.profile}-{secrets.token_hex(6)}"
     token = secrets.token_urlsafe(32)
     now = utcnow()
     with db() as conn:
         existing = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
         if existing:
-            # keep agent_config; refresh detection + targets (union with existing if empty report)
+            # keep agent_config; refresh detection + union targets with previous
             prev_targets = json.loads(existing["targets_json"] or "[]")
+            for tid in prev_targets:
+                if tid in TARGETS and tid not in targets:
+                    targets.append(tid)
             if not targets:
-                targets = prev_targets
+                targets = [t for t in prev_targets if t in TARGETS]
             conn.execute(
                 """UPDATE devices SET profile=?, targets_json=?, hostname=?, agent_version=?,
                    detected_json=?, last_seen_at=? WHERE device_id=?""",
@@ -526,6 +547,81 @@ def sync_report(body: SyncReport, device: sqlite3.Row = Depends(require_device))
                 (utcnow(), body.release_id, device["device_id"]),
             )
     return {"status": "recorded"}
+
+
+@app.websocket("/api/v1/devices/ws")
+async def device_websocket(websocket: WebSocket, token: str = Query(default="")) -> None:
+    from .hub import hub
+    from .push import flush_pending, record_push_ack
+
+    await websocket.accept()
+    device_id: str | None = None
+    try:
+        if not token:
+            first = await websocket.receive_text()
+            try:
+                msg = json.loads(first)
+            except json.JSONDecodeError:
+                await websocket.close(code=4400, reason="invalid json")
+                return
+            if msg.get("type") == "auth":
+                token = str(msg.get("token") or "")
+            else:
+                await websocket.close(code=4401, reason="auth required")
+                return
+        if not token:
+            await websocket.close(code=4401, reason="missing token")
+            return
+        with db() as conn:
+            row = conn.execute("SELECT * FROM devices WHERE device_token=?", (token,)).fetchone()
+        if not row:
+            await websocket.close(code=4401, reason="invalid token")
+            return
+        device_id = row["device_id"]
+        await hub.connect(device_id, websocket)
+        await websocket.send_json({"type": "connected", "device_id": device_id})
+        with db() as conn:
+            conn.execute(
+                "UPDATE devices SET last_seen_at=? WHERE device_id=?",
+                (utcnow(), device_id),
+            )
+            await flush_pending(hub, conn, device_id)
+
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "message": "invalid json"})
+                continue
+            typ = msg.get("type")
+            if typ == "ping":
+                with db() as conn:
+                    conn.execute(
+                        "UPDATE devices SET last_seen_at=? WHERE device_id=?",
+                        (utcnow(), device_id),
+                    )
+                await websocket.send_json({"type": "pong"})
+            elif typ == "push.ack":
+                delivery_id = msg.get("delivery_id")
+                if not delivery_id:
+                    continue
+                with db() as conn:
+                    record_push_ack(
+                        conn,
+                        delivery_id=str(delivery_id),
+                        ok=bool(msg.get("ok", True)),
+                        detail=msg.get("detail") if isinstance(msg.get("detail"), dict) else {},
+                        device_id=device_id,
+                    )
+                await websocket.send_json({"type": "push.ack.received", "delivery_id": delivery_id})
+            else:
+                await websocket.send_json({"type": "error", "message": f"unknown type: {typ}"})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if device_id:
+            await hub.disconnect(device_id, websocket)
 
 
 # --- Admin API (open for MVP; protect via CF Access in front) ---
@@ -682,7 +778,18 @@ def create_release(changelog: str = "manual") -> dict[str, Any]:
 def list_devices() -> list[dict[str, Any]]:
     with db() as conn:
         rows = conn.execute("SELECT * FROM devices ORDER BY last_seen_at DESC, created_at DESC").fetchall()
-    return [device_dict(r) for r in rows]
+        return [enrich_device(device_dict(r), conn) for r in rows]
+
+
+@app.get("/api/v1/push-deliveries")
+def list_push_deliveries(
+    device_id: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+) -> list[dict[str, Any]]:
+    from .push import list_deliveries
+
+    with db() as conn:
+        return list_deliveries(conn, device_id=device_id, limit=limit)
 
 
 @app.get("/api/v1/devices/{device_id}")
@@ -740,7 +847,8 @@ def get_device(device_id: str) -> dict[str, Any]:
     d["agents"] = agents_view
     d["logical_servers"] = logicals
     d["effective_artifact"] = artifact
-    return d
+    with db() as conn:
+        return enrich_device(d, conn)
 
 
 class AgentConfigPatch(BaseModel):
@@ -779,7 +887,10 @@ def _normalize_agent_entry(entry: dict[str, Any]) -> dict[str, Any]:
 
 
 @app.patch("/api/v1/devices/{device_id}/agents")
-def patch_device_agents(device_id: str, body: AgentConfigPatch) -> dict[str, Any]:
+async def patch_device_agents(device_id: str, body: AgentConfigPatch) -> dict[str, Any]:
+    from .hub import hub
+    from .push import enqueue_push
+
     with db() as conn:
         row = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
         if not row:
@@ -819,6 +930,18 @@ def patch_device_agents(device_id: str, body: AgentConfigPatch) -> dict[str, Any
         conn.execute(
             "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
             ("device.agents.patch", json.dumps({"device_id": device_id, "targets": targets, "agent_config": cfg}), utcnow()),
+        )
+        row = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
+        assert row is not None
+        await enqueue_push(
+            hub,
+            conn,
+            device_id=device_id,
+            device_row=row,
+            targets=targets,
+            trigger="admin_save",
+            trigger_detail={"source": "patch_device_agents", "agent_config": body.agent_config},
+            build_artifact_for_device=build_artifact_for_device,
         )
     return get_device(device_id)
 
@@ -946,7 +1069,9 @@ def scripts_parse(body: ScriptBody) -> dict[str, Any]:
 
 
 @app.post("/api/v1/scripts/apply")
-def scripts_apply(body: ScriptBody) -> dict[str, Any]:
+async def scripts_apply(body: ScriptBody) -> dict[str, Any]:
+    from .hub import hub
+    from .push import enqueue_push
     from .script_parser import apply_script_to_device_config, parse_script
 
     script, errors = parse_script(body.script, body.format)
@@ -976,11 +1101,24 @@ def scripts_apply(body: ScriptBody) -> dict[str, Any]:
         }
         results.append(entry)
         if not body.dry_run:
+            device_id = d["device_id"]
             with db() as conn:
                 conn.execute(
                     "UPDATE devices SET targets_json=?, agent_config_json=? WHERE device_id=?",
-                    (json.dumps(new_targets), json.dumps(new_cfg), d["device_id"]),
+                    (json.dumps(new_targets), json.dumps(new_cfg), device_id),
                 )
+                fresh = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
+                if fresh is not None:
+                    await enqueue_push(
+                        hub,
+                        conn,
+                        device_id=device_id,
+                        device_row=fresh,
+                        targets=new_targets,
+                        trigger="script_apply",
+                        trigger_detail={"script_format": body.format},
+                        build_artifact_for_device=build_artifact_for_device,
+                    )
             applied += 1
     if not body.dry_run and results:
         with db() as conn:
@@ -1070,3 +1208,8 @@ def list_audit(limit: int = 50) -> list[dict[str, Any]]:
         {"id": r["id"], "action": r["action"], "detail": json.loads(r["detail_json"] or "{}"), "created_at": r["created_at"]}
         for r in rows
     ]
+
+
+from .mcp_server import mount_mcp
+
+mount_mcp(app)

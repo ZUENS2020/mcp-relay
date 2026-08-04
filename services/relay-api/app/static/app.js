@@ -4,6 +4,7 @@ const state = {
   devices: [],
   skills: [],
   audit: [],
+  pushDeliveries: [],
   view: "config",
   selectedDeviceId: null,
   selectedAgentId: null,
@@ -121,6 +122,37 @@ function renderServers() {
     </table>`;
 }
 
+function pushStatusBadge(d) {
+  const lp = d.last_push;
+  if (!lp) return "";
+  const cls =
+    lp.status === "acked"
+      ? "push-ok"
+      : lp.status === "failed"
+        ? "push-fail"
+        : lp.status === "sent" || lp.status === "queued"
+          ? "push-pending"
+          : "";
+  const label =
+    lp.status === "acked"
+      ? "已推送"
+      : lp.status === "failed"
+        ? "推送失败"
+        : lp.status === "sent"
+          ? "已发送"
+          : lp.status === "queued"
+            ? "待推送"
+            : lp.status;
+  return `<span class="badge push-badge ${cls}">${esc(label)}</span>`;
+}
+
+function presenceDot(online) {
+  const tip = online
+    ? "WebSocket 在线（mcp-relay connect / watch）"
+    : "离线：本机需运行 mcp-relay connect 或 watch 才会显示绿点";
+  return `<span class="presence-dot ${online ? "online" : "offline"}" title="${tip}"></span>`;
+}
+
 function renderDevicesTable() {
   const el = $("#devices-table");
   if (!el) return;
@@ -130,16 +162,18 @@ function renderDevicesTable() {
   }
   el.innerHTML = `
     <table>
-      <thead><tr><th>设备 ID</th><th>主机名</th><th>Profile</th><th>Agent</th><th>版本</th><th>最近同步</th><th></th></tr></thead>
+      <thead><tr><th>状态</th><th>设备 ID</th><th>主机名</th><th>Profile</th><th>Agent</th><th>版本</th><th>推送</th><th>最近同步</th><th></th></tr></thead>
       <tbody>
         ${state.devices
           .map(
             (d) => `<tr>
+          <td>${presenceDot(d.online)}</td>
           <td class="mono">${esc(d.device_id)}</td>
           <td>${esc(d.hostname || "—")}</td>
           <td>${esc(d.profile)}</td>
           <td>${(d.targets || []).map((t) => `<span class="badge">${esc(t)}</span>`).join(" ")}</td>
           <td>${esc(d.agent_version || "—")}</td>
+          <td>${pushStatusBadge(d)}${d.pending_push_count ? `<span class="muted"> (${d.pending_push_count})</span>` : ""}</td>
           <td>${fmtTime(d.last_sync_at)}</td>
           <td><button class="btn" type="button" data-open-config="${esc(d.device_id)}">去配置</button></td>
         </tr>`
@@ -162,12 +196,12 @@ function renderDevicesList() {
       const agents = (d.targets || []).map((t) => `<span class="badge">${esc(t)}</span>`).join(" ");
       return `<button type="button" class="device-row ${active}" data-select-device="${esc(d.device_id)}" role="option" aria-selected="${active ? "true" : "false"}">
         <div class="device-row-top">
-          <strong class="mono">${esc(d.hostname || d.device_id)}</strong>
+          <span class="device-row-title">${presenceDot(d.online)}<strong class="mono">${esc(d.hostname || d.device_id)}</strong></span>
           <span class="badge">${esc(d.profile)}</span>
         </div>
         <div class="device-row-meta muted">${esc(d.device_id)}</div>
         <div class="device-row-agents">${agents || '<span class="muted">无 Agent</span>'}</div>
-        <div class="device-row-meta muted">最近可见 ${fmtTime(d.last_seen_at || d.last_sync_at)}</div>
+        <div class="device-row-meta">${pushStatusBadge(d)} <span class="muted">最近可见 ${fmtTime(d.last_seen_at || d.last_sync_at)}</span></div>
       </button>`;
     })
     .join("");
@@ -342,6 +376,34 @@ function renderSkills() {
     </table>`;
 }
 
+function renderPushDeliveries() {
+  const el = $("#push-table");
+  if (!el) return;
+  if (!state.pushDeliveries.length) {
+    el.innerHTML = `<p class="muted pad">暂无推送记录</p>`;
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead><tr><th>时间</th><th>设备</th><th>状态</th><th>触发</th><th>Release</th><th>Agent</th><th>错误</th></tr></thead>
+      <tbody>
+        ${state.pushDeliveries
+          .map(
+            (p) => `<tr>
+          <td>${fmtTime(p.created_at)}</td>
+          <td class="mono">${esc(p.device_id)}</td>
+          <td><span class="badge push-badge push-${esc(p.status)}">${esc(p.status)}</span></td>
+          <td>${esc(p.trigger)}</td>
+          <td class="mono">${esc(p.release_id)}</td>
+          <td>${(p.targets || []).map((t) => `<span class="badge">${esc(t)}</span>`).join(" ")}</td>
+          <td class="muted">${esc(p.error || "")}</td>
+        </tr>`
+          )
+          .join("")}
+      </tbody>
+    </table>`;
+}
+
 function renderAudit() {
   $("#audit-table").innerHTML = `
     <table>
@@ -361,19 +423,21 @@ function renderAudit() {
 }
 
 async function refresh() {
-  const [health, servers, bindings, devices, skills, audit] = await Promise.all([
+  const [health, servers, bindings, devices, skills, audit, pushDeliveries] = await Promise.all([
     api("/health"),
     api("/api/v1/logical-servers"),
     api("/api/v1/bindings"),
     api("/api/v1/devices"),
     api("/api/v1/skill-packs"),
     api("/api/v1/audit?limit=40"),
+    api("/api/v1/push-deliveries?limit=80"),
   ]);
   state.servers = servers;
   state.bindings = bindings;
   state.devices = devices;
   state.skills = skills;
   state.audit = audit;
+  state.pushDeliveries = pushDeliveries;
   const healthLine = $("#health-line");
   if (healthLine) healthLine.textContent = `接口 ${health.status} · ${fmtTime(health.time)}`;
   renderOverview();
@@ -381,6 +445,7 @@ async function refresh() {
   renderDevicesTable();
   renderSkills();
   renderAudit();
+  renderPushDeliveries();
   if (state.selectedDeviceId) {
     const keepAgent = state.selectedAgentId;
     state.deviceDetail = await api(`/api/v1/devices/${encodeURIComponent(state.selectedDeviceId)}`);
@@ -536,6 +601,12 @@ function wire() {
   $("#btn-refresh")?.addEventListener("click", refreshToast);
   $("#btn-refresh-devices")?.addEventListener("click", refreshToast);
   $("#btn-refresh-config")?.addEventListener("click", refreshToast);
+  $("#btn-refresh-push")?.addEventListener("click", refreshToast);
+  setInterval(() => {
+    if (["config", "devices", "push", "overview"].includes(state.view)) {
+      refresh().catch(() => {});
+    }
+  }, 10000);
 
   $("#btn-release")?.addEventListener("click", async () => {
     const r = await api("/api/v1/releases?changelog=ui", { method: "POST" });

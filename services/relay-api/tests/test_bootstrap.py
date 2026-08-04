@@ -85,7 +85,29 @@ def test_bootstrap_skips_when_already_configured(tmp_path, monkeypatch):
     assert r.json()["reason"] == "already_configured"
 
 
-if __name__ == "__main__":
+def test_register_unions_detected_targets(tmp_path, monkeypatch):
+    client, _ = _client(tmp_path, monkeypatch)
+    reg = client.post(
+        "/api/v1/devices/register",
+        json={
+            "device_id": "test-union-1",
+            "profile": "windows-desktop",
+            "targets": ["pi"],
+            "detected": [
+                {"id": "cursor", "path": "C:\\Users\\x\\.cursor\\mcp.json", "present": True},
+                {"id": "pi", "path": "C:\\Users\\x\\.pi\\agent\\mcp.json", "present": True},
+                {"id": "codex", "path": "C:\\Users\\x\\.codex\\config.toml", "present": True},
+            ],
+        },
+    )
+    assert reg.status_code == 200, reg.text
+    targets = reg.json()["targets"]
+    assert "pi" in targets
+    assert "cursor" in targets
+    assert "codex" in targets
+
+
+
     # minimal runner without pytest
     import tempfile
     from unittest.mock import MagicMock

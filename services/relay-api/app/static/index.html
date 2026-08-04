@@ -22,6 +22,7 @@
           <button type="button" data-view="config" class="active" aria-current="page">配置</button>
           <button type="button" data-view="scripts">批量脚本</button>
           <button type="button" data-view="devices">设备</button>
+          <button type="button" data-view="push">推送记录</button>
         </div>
         <div class="nav-group">
           <div class="nav-group-label">资源</div>
@@ -136,6 +137,20 @@
             <pre class="preview" id="script-result">执行解析或试运行以预览匹配的设备</pre>
           </div>
         </div>
+      </section>
+
+      <!-- 推送记录 -->
+      <section id="view-push" class="hidden" aria-labelledby="title-push">
+        <div class="header">
+          <div>
+            <h1 id="title-push">推送记录</h1>
+            <p>保存配置后的下发状态：queued → sent → acked / failed</p>
+          </div>
+          <div class="toolbar">
+            <button class="btn" id="btn-refresh-push" type="button">刷新</button>
+          </div>
+        </div>
+        <div class="panel"><div id="push-table"></div></div>
       </section>
 
       <!-- 设备 -->

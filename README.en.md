@@ -45,8 +45,13 @@ mcp-relay doctor
 mcp-relay config get
 mcp-relay config set url https://example.com
 mcp-relay register
-mcp-relay version
+mcp-relay connect          # WebSocket keep-alive (save-and-push)
+mcp-relay watch            # connect + periodic sync fallback
+  mcp-relay update [--check]   # check/upgrade npm package (watch/connect auto-update every 6h)
+  mcp-relay version
 ```
+
+Config: `mcp-relay config set auto_update true|false` (default on).
 
 ## Architecture
 
@@ -58,7 +63,39 @@ mcp-relay version
 | `agent/` | Go | Detect, backup, five adapters |
 | `config-repo/` | JSON | Logical servers + bindings |
 
-## Server deploy
+```
+Device ──connect/ws──▶ Relay API ──push.apply──▶ Agent writes local mcp.json
+        sync fallback ▲        │
+Admin UI: online status | push history | agent config
+                        ▲
+Cursor etc. ── MCP /mcp ── read/write devices, trigger push
+```
+
+### Real-time push
+
+- Run `mcp-relay connect` (or `watch`, which includes WS) to show **green online** in the admin UI
+- Saving agent config in the console **pushes immediately**; offline devices queue until reconnect
+- Sidebar **Push history** shows `queued → sent → acked/failed`
+
+### Relay MCP admin API
+
+Set `RELAY_MCP_ADMIN_TOKEN` on the server, then add Streamable HTTP MCP in Cursor:
+
+```json
+{
+  "mcpServers": {
+    "mcp-relay": {
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <RELAY_MCP_ADMIN_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+Tools include `relay_list_devices`, `relay_get_device`, `relay_patch_device_agents` (save + push), `relay_list_push_deliveries`, `relay_apply_script`, etc.
+
 
 ```bash
 bash scripts/deploy-nec.sh
@@ -73,6 +110,7 @@ bash scripts/deploy-nec.sh
 ```bash
 cd services/relay-api
 pip install -r requirements.txt
+pip install -r requirements-mcp.txt   # optional: /mcp admin tools
 export RELAY_DATA=../../data RELAY_CONFIG_REPO=../../config-repo SKILLS_ROOT=../../skills-repo
 uvicorn app.main:app --host 127.0.0.1 --port 8740
 
