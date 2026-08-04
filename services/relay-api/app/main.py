@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -355,12 +355,22 @@ def auth_me(authorization: str | None = Header(default=None)) -> dict[str, Any]:
 
 
 @app.get("/")
-def admin_ui() -> FileResponse:
+def admin_ui() -> Response:
     index = STATIC_DIR / "index.html"
     if not index.exists():
         raise HTTPException(404, "frontend not found")
-    return FileResponse(
-        index,
+    html = index.read_text(encoding="utf-8")
+    # In access mode the reverse proxy is the identity gate: render the login
+    # gate hidden from the very first paint so it never flashes before the
+    # frontend boot() confirms the mode.
+    if AUTH_MODE == "access":
+        html = html.replace(
+            '<div id="login-gate" class="login-gate">',
+            '<div id="login-gate" class="login-gate hidden">',
+            1,
+        )
+    return HTMLResponse(
+        html,
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate",
             "Pragma": "no-cache",

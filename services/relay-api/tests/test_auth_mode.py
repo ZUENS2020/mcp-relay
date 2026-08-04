@@ -92,3 +92,20 @@ def test_access_mode_open_admin_api(access_client):
         ).status_code
         == 401
     )
+
+
+def test_access_mode_index_hides_login_gate(tmp_path, monkeypatch):
+    """In access mode the login gate must be hidden from first paint (no flash)."""
+    main = _client(tmp_path, monkeypatch, RELAY_AUTH_MODE="access")
+    with TestClient(main.app) as client:
+        html = client.get("/").text
+        assert 'login-gate hidden' in html
+
+
+def test_password_mode_index_shows_login_gate(tmp_path, monkeypatch):
+    """In password mode the login gate renders visible for the login form."""
+    main = _client(tmp_path, monkeypatch, RELAY_AUTH_MODE="password")
+    with TestClient(main.app) as client:
+        html = client.get("/").text
+        assert '<div id="login-gate" class="login-gate">' in html
+        assert 'login-gate hidden' not in html
