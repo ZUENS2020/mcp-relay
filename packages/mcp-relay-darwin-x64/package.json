@@ -1,10 +1,19 @@
 {
   "name": "@zuens2020/mcp-relay-darwin-x64",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP Relay agent binary for darwin-x64",
-  "os": ["darwin"],
-  "cpu": ["x64"],
-  "files": ["bin", "package.json"],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin",
+    "package.json"
+  ],
   "license": "MIT",
-  "publishConfig": { "access": "public" }
+  "publishConfig": {
+    "access": "public"
+  }
 }

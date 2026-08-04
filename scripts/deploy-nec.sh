@@ -11,7 +11,10 @@ echo "==> Deploy MCP Relay -> ${REMOTE}:${DEST}"
 ssh -o BatchMode=yes -o ConnectTimeout=15 "$REMOTE" "mkdir -p ${DEST}/data"
 
 ZIP="$(mktemp /tmp/mcp-relay-XXXXXX.zip 2>/dev/null || echo /tmp/mcp-relay-deploy.zip)"
-python3 - <<PY
+# Prefer `python` on Windows hosts where the Store `python3` stub fails.
+PY=python3
+command -v python3 >/dev/null 2>&1 || PY=python
+$PY - <<PY
 import zipfile, pathlib
 root = pathlib.Path(r"""$ROOT""")
 out = pathlib.Path(r"""$ZIP""")

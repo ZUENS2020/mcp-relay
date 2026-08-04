@@ -42,6 +42,18 @@ function resolveBinary() {
     if (!fs.existsSync(bin)) {
       throw new Error(`二进制缺失: ${bin}`);
     }
+    // npm pack from Windows may drop the Unix execute bit
+    if (process.platform !== "win32") {
+      try {
+        fs.accessSync(bin, fs.constants.X_OK);
+      } catch {
+        try {
+          fs.chmodSync(bin, 0o755);
+        } catch {
+          /* ignore — postinstall may have fixed it */
+        }
+      }
+    }
     return bin;
   } catch (e) {
     throw new Error(

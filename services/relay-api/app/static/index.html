@@ -3,209 +3,270 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MCP Relay · Suzuka</title>
+  <title>MCP Relay · 配置控制台</title>
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body data-theme="day">
+  <a class="skip-link" href="#main">跳到主内容</a>
   <div class="shell">
-    <aside class="nav">
+    <aside class="nav" aria-label="主导航">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
         MCP Relay
       </div>
-      <p class="brand-sub">Config plane</p>
-      <div class="nav-links">
-        <button type="button" data-view="overview" class="active">Overview</button>
-        <button type="button" data-view="servers">Logical MCP</button>
-        <button type="button" data-view="bindings">Bindings</button>
-        <button type="button" data-view="preview">Preview</button>
-        <button type="button" data-view="devices">Devices</button>
-        <button type="button" data-view="skills">Skills</button>
-        <button type="button" data-view="audit">Audit</button>
-      </div>
+      <p class="brand-sub">配置控制台</p>
+
+      <nav class="nav-groups">
+        <div class="nav-group">
+          <div class="nav-group-label">工作</div>
+          <button type="button" data-view="config" class="active" aria-current="page">配置</button>
+          <button type="button" data-view="scripts">批量脚本</button>
+          <button type="button" data-view="devices">设备</button>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">资源</div>
+          <button type="button" data-view="servers">MCP 服务</button>
+          <button type="button" data-view="skills">技能包</button>
+          <button type="button" data-view="preview">渲染预览</button>
+        </div>
+        <div class="nav-group">
+          <div class="nav-group-label">系统</div>
+          <button type="button" data-view="overview">总览</button>
+          <button type="button" data-view="audit">审计</button>
+        </div>
+      </nav>
+
       <div class="nav-foot">
-        <button type="button" class="btn btn-ghost" id="btn-theme" style="width:100%">Theme: Day</button>
+        <button type="button" class="btn btn-ghost" id="btn-theme" style="width:100%" aria-pressed="false">主题：日间</button>
       </div>
     </aside>
 
-    <main class="main">
-      <section id="view-overview">
-        <div class="header">
+    <main class="main" id="main">
+      <!-- 配置：设备 → Agent → mcp.json -->
+      <section id="view-config" aria-labelledby="title-config">
+        <div class="header device-header">
           <div>
-            <h2>Overview</h2>
-            <p>Define once · render by profile × target · agent pull</p>
+            <h1 id="title-config">配置</h1>
+            <p>选择设备与 Agent，编辑将下发的完整 mcp.json</p>
           </div>
           <div class="toolbar">
-            <button class="btn" id="btn-refresh" type="button">Refresh</button>
-            <button class="btn btn-primary" id="btn-release" type="button">Publish release</button>
+            <button class="btn" id="btn-refresh-config" type="button">刷新</button>
           </div>
         </div>
-        <div class="stats">
-          <div class="stat"><div class="label">Servers</div><div class="value" id="stat-servers">—</div></div>
-          <div class="stat"><div class="label">Bindings</div><div class="value" id="stat-bindings">—</div></div>
-          <div class="stat"><div class="label">Devices</div><div class="value" id="stat-devices">—</div></div>
-          <div class="stat"><div class="label">Skills</div><div class="value" id="stat-skills">—</div></div>
-        </div>
-        <div class="panel">
-          <div class="panel-head"><h3>Recent device sync</h3><span class="muted" id="health-line">checking…</span></div>
-          <div id="overview-devices"></div>
+        <div class="device-workspace" id="device-workspace">
+          <div class="panel col-devices">
+            <div class="panel-head"><h2>设备</h2><span class="muted" id="device-count"></span></div>
+            <div id="devices-list" role="listbox" aria-label="设备列表"></div>
+          </div>
+          <div
+            class="col-split"
+            data-split="devices"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖拽调节设备列宽度"
+            tabindex="0"
+          ></div>
+          <div class="panel col-agents">
+            <div class="panel-head"><h2>Agent</h2><span class="muted" id="agent-count"></span></div>
+            <div id="agents-list" role="listbox" aria-label="Agent 列表">
+              <p class="muted pad">请先选择左侧设备</p>
+            </div>
+          </div>
+          <div
+            class="col-split"
+            data-split="agents"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖拽调节 Agent 列宽度"
+            tabindex="0"
+          ></div>
+          <div class="panel col-mcp">
+            <div class="panel-head">
+              <div>
+                <h2 id="mcp-title">mcp.json</h2>
+                <div class="muted mono" id="mcp-path">—</div>
+              </div>
+              <div class="toolbar">
+                <label class="agent-enable compact">
+                  <input type="checkbox" id="agent-enabled" disabled />
+                  启用
+                </label>
+                <button class="btn" id="btn-mcp-reset" type="button" disabled>重置</button>
+                <button class="btn btn-primary" id="btn-mcp-save" type="button" disabled>保存</button>
+              </div>
+            </div>
+            <label class="sr-only" for="mcp-editor">MCP JSON 编辑器</label>
+            <textarea id="mcp-editor" class="mcp-editor" spellcheck="false" disabled placeholder='选择 Agent 后显示完整 {"mcpServers":{...}}'></textarea>
+            <div class="mcp-foot muted" id="mcp-hint">右侧是该 Agent 的完整 MCP 文档，不按单个服务拆开编辑。</div>
+          </div>
         </div>
       </section>
 
-      <section id="view-servers" class="hidden">
+      <!-- 批量脚本 -->
+      <section id="view-scripts" class="hidden" aria-labelledby="title-scripts">
         <div class="header">
           <div>
-            <h2>Logical MCP</h2>
-            <p>Canonical servers; bindings apply overrides</p>
+            <h1 id="title-scripts">批量脚本</h1>
+            <p>YAML 或行式 DSL · 先试运行再正式应用</p>
+          </div>
+          <div class="toolbar">
+            <label class="sr-only" for="script-format">脚本格式</label>
+            <select id="script-format" aria-label="脚本格式">
+              <option value="">自动识别</option>
+              <option value="yaml">YAML</option>
+              <option value="dsl">DSL</option>
+            </select>
+            <button class="btn" id="btn-script-example-yaml" type="button">YAML 示例</button>
+            <button class="btn" id="btn-script-example-dsl" type="button">DSL 示例</button>
           </div>
         </div>
         <div class="grid-2">
           <div class="panel">
-            <div class="panel-head"><h3>Registry</h3></div>
-            <div id="servers-table"></div>
-          </div>
-          <div class="panel">
-            <div class="panel-head"><h3>Upsert</h3></div>
-            <form id="server-form" class="form-grid">
-              <label>ID<input name="id" required placeholder="trek" /></label>
-              <label>Display name<input name="display_name" placeholder="TREK Travel MCP" /></label>
-              <label>Transport
-                <select name="transport">
-                  <option value="http">http</option>
-                  <option value="stdio">stdio</option>
-                </select>
-              </label>
-              <label>Default JSON
-                <textarea name="default_json" required>{"url":"https://example.com/mcp"}</textarea>
-              </label>
-              <label>Tags<input name="tags" placeholder="travel,remote" /></label>
-            </form>
+            <div class="panel-head"><h2>脚本</h2></div>
+            <label class="sr-only" for="script-editor">脚本内容</label>
+            <textarea id="script-editor" class="script-editor" spellcheck="false" placeholder="enable profile:windows-desktop agent:cursor trek nowledge-mem"></textarea>
             <div class="form-actions">
-              <button class="btn btn-primary" type="submit" form="server-form">Save</button>
+              <button class="btn" id="btn-script-parse" type="button">解析</button>
+              <button class="btn" id="btn-script-dry" type="button">试运行</button>
+              <button class="btn btn-primary" id="btn-script-apply" type="button">应用</button>
             </div>
           </div>
+          <div class="panel">
+            <div class="panel-head"><h2>结果</h2><span class="muted" id="script-result-meta"></span></div>
+            <pre class="preview" id="script-result">执行解析或试运行以预览匹配的设备</pre>
+          </div>
         </div>
       </section>
 
-      <section id="view-bindings" class="hidden">
+      <!-- 设备 -->
+      <section id="view-devices" class="hidden" aria-labelledby="title-devices">
         <div class="header">
           <div>
-            <h2>Bindings</h2>
-            <p>logical × profile × target</p>
+            <h1 id="title-devices">设备</h1>
+            <p>已注册客户端与最近同步状态</p>
           </div>
           <div class="toolbar">
-            <select id="filter-profile">
-              <option value="">All profiles</option>
-              <option>windows-desktop</option>
-              <option>mac-laptop</option>
-              <option>nec-server</option>
-            </select>
-            <select id="filter-target">
-              <option value="">All targets</option>
-              <option>cursor</option>
-              <option>hermes</option>
-              <option>pi</option>
-              <option>codex</option>
-              <option>claude-code</option>
-            </select>
-          </div>
-        </div>
-        <div class="grid-2">
-          <div class="panel">
-            <div class="panel-head"><h3>List</h3></div>
-            <div id="bindings-table"></div>
-          </div>
-          <div class="panel">
-            <div class="panel-head"><h3>Upsert</h3></div>
-            <form id="binding-form" class="form-grid">
-              <label>Logical ID<input name="logical_id" required list="logical-ids" /></label>
-              <datalist id="logical-ids"></datalist>
-              <label>Profile
-                <select name="profile">
-                  <option>windows-desktop</option>
-                  <option>mac-laptop</option>
-                  <option>nec-server</option>
-                </select>
-              </label>
-              <label>Target
-                <select name="target">
-                  <option>cursor</option>
-                  <option>hermes</option>
-                  <option>pi</option>
-                  <option>codex</option>
-                  <option>claude-code</option>
-                </select>
-              </label>
-              <label><span style="text-transform:none;letter-spacing:0;font-family:var(--font-body);font-weight:500;color:var(--fg-1)"><input type="checkbox" name="enabled" checked /> Enabled</span></label>
-              <label>Overrides JSON<textarea name="overrides_json">{}</textarea></label>
-            </form>
-            <div class="form-actions">
-              <button class="btn btn-primary" type="submit" form="binding-form">Save</button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="view-preview" class="hidden">
-        <div class="header">
-          <div>
-            <h2>Render preview</h2>
-            <p>No local writes — inspect target artifacts only</p>
-          </div>
-          <div class="toolbar">
-            <select id="preview-profile">
-              <option>windows-desktop</option>
-              <option>mac-laptop</option>
-              <option>nec-server</option>
-            </select>
-            <select id="preview-target">
-              <option>cursor</option>
-              <option>hermes</option>
-              <option>pi</option>
-              <option>codex</option>
-              <option>claude-code</option>
-            </select>
-            <button class="btn btn-primary" id="btn-preview" type="button">Preview</button>
-          </div>
-        </div>
-        <div class="panel">
-          <div class="panel-head"><h3>Artifact</h3><span class="muted" id="preview-meta"></span></div>
-          <pre class="preview" id="preview-out">Select profile / target</pre>
-        </div>
-      </section>
-
-      <section id="view-devices" class="hidden">
-        <div class="header">
-          <div>
-            <h2>Devices</h2>
-            <p>Registered agents and last sync</p>
+            <button class="btn" id="btn-refresh-devices" type="button">刷新</button>
           </div>
         </div>
         <div class="panel"><div id="devices-table"></div></div>
       </section>
 
-      <section id="view-skills" class="hidden">
+      <!-- MCP 服务 -->
+      <section id="view-servers" class="hidden" aria-labelledby="title-servers">
         <div class="header">
           <div>
-            <h2>Skill packs</h2>
-            <p>Install paths per target</p>
+            <h1 id="title-servers">MCP 服务</h1>
+            <p>逻辑服务目录；设备配置与 Profile 绑定会引用这里的定义</p>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-head"><h2>目录</h2></div>
+            <div id="servers-table"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h2>新建 / 更新</h2></div>
+            <form id="server-form" class="form-grid">
+              <label>标识<input name="id" required placeholder="trek" autocomplete="off" /></label>
+              <label>显示名称<input name="display_name" placeholder="TREK 旅行 MCP" /></label>
+              <label>传输方式
+                <select name="transport">
+                  <option value="http">http</option>
+                  <option value="stdio">stdio</option>
+                </select>
+              </label>
+              <label>默认配置 JSON
+                <textarea name="default_json" required>{"url":"https://example.com/mcp"}</textarea>
+              </label>
+              <label>标签<input name="tags" placeholder="travel,remote" /></label>
+            </form>
+            <div class="form-actions">
+              <button class="btn btn-primary" type="submit" form="server-form">保存</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 技能包 -->
+      <section id="view-skills" class="hidden" aria-labelledby="title-skills">
+        <div class="header">
+          <div>
+            <h1 id="title-skills">技能包</h1>
+            <p>按目标 Agent 安装路径下发的 Skill</p>
           </div>
         </div>
         <div class="panel"><div id="skills-table"></div></div>
       </section>
 
-      <section id="view-audit" class="hidden">
+      <!-- 渲染预览 -->
+      <section id="view-preview" class="hidden" aria-labelledby="title-preview">
         <div class="header">
           <div>
-            <h2>Audit</h2>
-            <p>Register · publish · sync trail</p>
+            <h1 id="title-preview">渲染预览</h1>
+            <p>按 Profile × Agent 查看合成结果，不写入本地配置</p>
+          </div>
+          <div class="toolbar">
+            <label class="sr-only" for="preview-profile">Profile</label>
+            <select id="preview-profile" aria-label="Profile">
+              <option value="windows-desktop">windows-desktop</option>
+              <option value="mac-laptop">mac-laptop</option>
+              <option value="nec-server">nec-server</option>
+            </select>
+            <label class="sr-only" for="preview-target">Agent</label>
+            <select id="preview-target" aria-label="Agent">
+              <option value="cursor">cursor</option>
+              <option value="hermes">hermes</option>
+              <option value="pi">pi</option>
+              <option value="codex">codex</option>
+              <option value="claude-code">claude-code</option>
+            </select>
+            <button class="btn btn-primary" id="btn-preview" type="button">预览</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>产物</h2><span class="muted" id="preview-meta"></span></div>
+          <pre class="preview" id="preview-out">请选择 Profile / Agent 后预览</pre>
+        </div>
+      </section>
+
+      <!-- 总览 -->
+      <section id="view-overview" class="hidden" aria-labelledby="title-overview">
+        <div class="header">
+          <div>
+            <h1 id="title-overview">总览</h1>
+            <p>定义一次 · 按设备与 Agent 下发 · 客户端拉取同步</p>
+          </div>
+          <div class="toolbar">
+            <button class="btn" id="btn-refresh" type="button">刷新</button>
+            <button class="btn btn-primary" id="btn-release" type="button">发布版本</button>
+          </div>
+        </div>
+        <div class="stats">
+          <div class="stat"><div class="label">MCP 服务</div><div class="value" id="stat-servers">—</div></div>
+          <div class="stat"><div class="label">Profile 绑定</div><div class="value" id="stat-bindings">—</div></div>
+          <div class="stat"><div class="label">设备</div><div class="value" id="stat-devices">—</div></div>
+          <div class="stat"><div class="label">技能包</div><div class="value" id="stat-skills">—</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>最近设备同步</h2><span class="muted" id="health-line">检查中…</span></div>
+          <div id="overview-devices"></div>
+        </div>
+      </section>
+
+      <!-- 审计 -->
+      <section id="view-audit" class="hidden" aria-labelledby="title-audit">
+        <div class="header">
+          <div>
+            <h1 id="title-audit">审计</h1>
+            <p>注册 · 发布 · 配置变更 · 同步轨迹</p>
           </div>
         </div>
         <div class="panel"><div id="audit-table"></div></div>
       </section>
     </main>
   </div>
-  <div class="toast" id="toast"></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <script src="/static/app.js"></script>
 </body>
 </html>
