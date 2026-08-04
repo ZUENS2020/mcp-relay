@@ -4,11 +4,36 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MCP Relay · 配置控制台</title>
-  <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="/static/app.css?v=20260804k" />
 </head>
 <body data-theme="day">
   <a class="skip-link" href="#main">跳到主内容</a>
-  <div class="shell">
+
+  <div id="login-gate" class="login-gate">
+    <div class="login-card">
+      <div class="login-brand">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <div>
+          <div class="login-title">MCP Relay</div>
+          <div class="login-sub">配置控制台</div>
+        </div>
+      </div>
+      <form id="login-form" class="login-form" method="post" action="#" autocomplete="on">
+        <label>
+          用户名
+          <input id="login-user" name="username" type="text" autocomplete="username" required autofocus value="admin" />
+        </label>
+        <label>
+          密码
+          <input id="login-pass" name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <p class="login-error muted hidden" id="login-error" role="alert"></p>
+        <button class="btn btn-primary login-submit" type="submit">登录</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="shell hidden" id="app-shell">
     <aside class="nav" aria-label="主导航">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
@@ -21,14 +46,6 @@
           <div class="nav-group-label">工作</div>
           <button type="button" data-view="config" class="active" aria-current="page">配置</button>
           <button type="button" data-view="scripts">批量脚本</button>
-          <button type="button" data-view="devices">设备</button>
-          <button type="button" data-view="push">推送记录</button>
-        </div>
-        <div class="nav-group">
-          <div class="nav-group-label">资源</div>
-          <button type="button" data-view="servers">MCP 服务</button>
-          <button type="button" data-view="skills">技能包</button>
-          <button type="button" data-view="preview">渲染预览</button>
         </div>
         <div class="nav-group">
           <div class="nav-group-label">系统</div>
@@ -39,6 +56,7 @@
 
       <div class="nav-foot">
         <button type="button" class="btn btn-ghost" id="btn-theme" style="width:100%" aria-pressed="false">主题：日间</button>
+        <button type="button" class="btn btn-ghost" id="btn-admin-logout" style="width:100%;margin-top:6px">退出登录</button>
       </div>
     </aside>
 
@@ -92,12 +110,12 @@
                   <input type="checkbox" id="agent-enabled" disabled />
                   启用
                 </label>
-                <button class="btn" id="btn-mcp-reset" type="button" disabled>重置</button>
+                <button class="btn" id="btn-mcp-format" type="button" disabled title="Ctrl/⌘+Shift+F">格式化</button>
+                <button class="btn" id="btn-mcp-reset" type="button" disabled>恢复上次保存</button>
                 <button class="btn btn-primary" id="btn-mcp-save" type="button" disabled>保存</button>
               </div>
             </div>
-            <label class="sr-only" for="mcp-editor">MCP JSON 编辑器</label>
-            <textarea id="mcp-editor" class="mcp-editor" spellcheck="false" disabled placeholder='选择 Agent 后显示完整 {"mcpServers":{...}}'></textarea>
+            <div id="mcp-editor" class="mcp-editor" role="textbox" aria-label="MCP JSON 编辑器" aria-multiline="true"></div>
             <div class="mcp-foot muted" id="mcp-hint">右侧是该 Agent 的完整 MCP 文档，不按单个服务拆开编辑。</div>
           </div>
         </div>
@@ -139,118 +157,12 @@
         </div>
       </section>
 
-      <!-- 推送记录 -->
-      <section id="view-push" class="hidden" aria-labelledby="title-push">
-        <div class="header">
-          <div>
-            <h1 id="title-push">推送记录</h1>
-            <p>保存配置后的下发状态：queued → sent → acked / failed</p>
-          </div>
-          <div class="toolbar">
-            <button class="btn" id="btn-refresh-push" type="button">刷新</button>
-          </div>
-        </div>
-        <div class="panel"><div id="push-table"></div></div>
-      </section>
-
-      <!-- 设备 -->
-      <section id="view-devices" class="hidden" aria-labelledby="title-devices">
-        <div class="header">
-          <div>
-            <h1 id="title-devices">设备</h1>
-            <p>已注册客户端与最近同步状态</p>
-          </div>
-          <div class="toolbar">
-            <button class="btn" id="btn-refresh-devices" type="button">刷新</button>
-          </div>
-        </div>
-        <div class="panel"><div id="devices-table"></div></div>
-      </section>
-
-      <!-- MCP 服务 -->
-      <section id="view-servers" class="hidden" aria-labelledby="title-servers">
-        <div class="header">
-          <div>
-            <h1 id="title-servers">MCP 服务</h1>
-            <p>逻辑服务目录；设备配置与 Profile 绑定会引用这里的定义</p>
-          </div>
-        </div>
-        <div class="grid-2">
-          <div class="panel">
-            <div class="panel-head"><h2>目录</h2></div>
-            <div id="servers-table"></div>
-          </div>
-          <div class="panel">
-            <div class="panel-head"><h2>新建 / 更新</h2></div>
-            <form id="server-form" class="form-grid">
-              <label>标识<input name="id" required placeholder="trek" autocomplete="off" /></label>
-              <label>显示名称<input name="display_name" placeholder="TREK 旅行 MCP" /></label>
-              <label>传输方式
-                <select name="transport">
-                  <option value="http">http</option>
-                  <option value="stdio">stdio</option>
-                </select>
-              </label>
-              <label>默认配置 JSON
-                <textarea name="default_json" required>{"url":"https://example.com/mcp"}</textarea>
-              </label>
-              <label>标签<input name="tags" placeholder="travel,remote" /></label>
-            </form>
-            <div class="form-actions">
-              <button class="btn btn-primary" type="submit" form="server-form">保存</button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 技能包 -->
-      <section id="view-skills" class="hidden" aria-labelledby="title-skills">
-        <div class="header">
-          <div>
-            <h1 id="title-skills">技能包</h1>
-            <p>按目标 Agent 安装路径下发的 Skill</p>
-          </div>
-        </div>
-        <div class="panel"><div id="skills-table"></div></div>
-      </section>
-
-      <!-- 渲染预览 -->
-      <section id="view-preview" class="hidden" aria-labelledby="title-preview">
-        <div class="header">
-          <div>
-            <h1 id="title-preview">渲染预览</h1>
-            <p>按 Profile × Agent 查看合成结果，不写入本地配置</p>
-          </div>
-          <div class="toolbar">
-            <label class="sr-only" for="preview-profile">Profile</label>
-            <select id="preview-profile" aria-label="Profile">
-              <option value="windows-desktop">windows-desktop</option>
-              <option value="mac-laptop">mac-laptop</option>
-              <option value="nec-server">nec-server</option>
-            </select>
-            <label class="sr-only" for="preview-target">Agent</label>
-            <select id="preview-target" aria-label="Agent">
-              <option value="cursor">cursor</option>
-              <option value="hermes">hermes</option>
-              <option value="pi">pi</option>
-              <option value="codex">codex</option>
-              <option value="claude-code">claude-code</option>
-            </select>
-            <button class="btn btn-primary" id="btn-preview" type="button">预览</button>
-          </div>
-        </div>
-        <div class="panel">
-          <div class="panel-head"><h2>产物</h2><span class="muted" id="preview-meta"></span></div>
-          <pre class="preview" id="preview-out">请选择 Profile / Agent 后预览</pre>
-        </div>
-      </section>
-
       <!-- 总览 -->
       <section id="view-overview" class="hidden" aria-labelledby="title-overview">
         <div class="header">
           <div>
             <h1 id="title-overview">总览</h1>
-            <p>定义一次 · 按设备与 Agent 下发 · 客户端拉取同步</p>
+            <p>按设备与 Agent 保存 mcp.json · 客户端同步下发</p>
           </div>
           <div class="toolbar">
             <button class="btn" id="btn-refresh" type="button">刷新</button>
@@ -258,10 +170,8 @@
           </div>
         </div>
         <div class="stats">
-          <div class="stat"><div class="label">MCP 服务</div><div class="value" id="stat-servers">—</div></div>
-          <div class="stat"><div class="label">Profile 绑定</div><div class="value" id="stat-bindings">—</div></div>
           <div class="stat"><div class="label">设备</div><div class="value" id="stat-devices">—</div></div>
-          <div class="stat"><div class="label">技能包</div><div class="value" id="stat-skills">—</div></div>
+          <div class="stat"><div class="label">在线</div><div class="value" id="stat-online">—</div></div>
         </div>
         <div class="panel">
           <div class="panel-head"><h2>最近设备同步</h2><span class="muted" id="health-line">检查中…</span></div>
@@ -282,6 +192,6 @@
     </main>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/static/app.js"></script>
+  <script type="module" src="/static/app.js?v=20260804k"></script>
 </body>
 </html>

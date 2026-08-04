@@ -13,8 +13,11 @@ services:
       - RELAY_CONFIG_REPO=/config-repo
       - SKILLS_ROOT=/data/skills-repo
       - RELAY_BASE_URL=https://example.com
-      # Optional: enable /mcp admin tools (set in host env or .env)
-      # - RELAY_MCP_ADMIN_TOKEN=${RELAY_MCP_ADMIN_TOKEN}
+      # Required for MCP admin tools / script Bearer (optional if using UI password login)
+      - RELAY_ADMIN_TOKEN=${RELAY_ADMIN_TOKEN:-}
+      - RELAY_MCP_ADMIN_TOKEN=${RELAY_ADMIN_TOKEN:-}
+      - RELAY_ADMIN_USER=${RELAY_ADMIN_USER:-admin}
+      - RELAY_ADMIN_PASSWORD=${RELAY_ADMIN_PASSWORD:-admin123}
     volumes:
       - ./data:/data
       - ./config-repo:/config-repo:ro

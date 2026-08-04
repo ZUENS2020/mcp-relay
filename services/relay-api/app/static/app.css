@@ -607,6 +607,27 @@ tr:last-child td { border-bottom: 0; }
   cursor: pointer;
   transition: border-color var(--dur-fast) var(--ease-std), background var(--dur-fast) var(--ease-std);
 }
+.device-row-main {
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+.device-row-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.btn-xs {
+  padding: 2px 8px;
+  font-size: var(--fs-12);
+  line-height: var(--lh-12);
+}
 .device-row:hover,
 .agent-row:hover { border-color: var(--accent); }
 .device-row.active,
@@ -654,19 +675,26 @@ tr:last-child td { border-bottom: 0; }
   width: 100%;
   min-height: 420px;
   margin: 0;
-  padding: var(--sp-4);
+  padding: 0;
   border: 0;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  resize: none;
+  overflow: hidden;
   background: var(--zinc-950);
-  color: var(--accent-soft);
-  font-family: var(--font-mono);
-  font-size: var(--fs-12);
-  line-height: 1.55;
 }
-.mcp-editor:disabled {
+.mcp-editor .cm-editor {
+  height: 100%;
+  min-height: 420px;
+}
+.mcp-editor .cm-editor.cm-focused {
+  outline: none;
+}
+.mcp-editor.is-disabled {
   opacity: 0.55;
+  pointer-events: none;
+}
+.device-workspace.is-resizing .mcp-editor {
+  pointer-events: none;
 }
 .mcp-foot {
   padding: var(--sp-3) var(--sp-4);
@@ -750,4 +778,110 @@ tr:last-child td { border-bottom: 0; }
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* —— Login gate —— */
+.login-gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-6);
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 10%, color-mix(in srgb, var(--accent-soft) 35%, transparent), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 90% 80%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 50%),
+    var(--bg-0);
+}
+
+.login-gate.hidden {
+  display: none !important;
+}
+
+#app-shell.hidden {
+  display: none !important;
+}
+
+.login-card {
+  width: min(400px, 100%);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  box-shadow: var(--shadow-lift);
+  padding: var(--sp-7) var(--sp-6);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-6);
+}
+
+.login-title {
+  font-family: var(--font-label);
+  font-weight: 700;
+  font-size: var(--fs-24);
+  letter-spacing: -0.02em;
+  line-height: var(--lh-24);
+}
+
+.login-sub {
+  color: var(--fg-2);
+  font-size: var(--fs-14);
+  margin-top: 2px;
+}
+
+.login-form {
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.login-form label {
+  display: grid;
+  gap: var(--sp-2);
+  font-family: var(--font-label);
+  font-size: var(--fs-12);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--fg-2);
+}
+
+.login-form input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-1);
+  background: var(--bg-0);
+  color: var(--fg-0);
+  font-family: var(--font-body);
+  font-size: var(--fs-16);
+  line-height: var(--lh-16);
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+
+.login-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+
+.login-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: var(--fs-14);
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 500;
+  font-family: var(--font-body);
+}
+
+[data-theme="night"] .login-error { color: #fca5a5; }
+
+.login-submit {
+  width: 100%;
+  padding: 12px 16px;
+  font-size: var(--fs-16);
+  margin-top: var(--sp-1);
 }

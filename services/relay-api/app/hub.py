@@ -35,6 +35,16 @@ class ConnectionHub:
             if self._connections.get(device_id) is ws:
                 del self._connections[device_id]
 
+    async def force_disconnect(self, device_id: str, *, code: int = 4001, reason: str = "device deleted") -> None:
+        async with self._lock:
+            ws = self._connections.pop(device_id, None)
+        if ws is None:
+            return
+        try:
+            await ws.close(code=code, reason=reason)
+        except Exception:
+            pass
+
     async def send_json(self, device_id: str, msg: dict[str, Any]) -> bool:
         ws = self._connections.get(device_id)
         if ws is None:

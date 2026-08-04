@@ -1,6 +1,6 @@
 {
   "name": "@zuens2020/mcp-relay-darwin-x64",
-  "version": "0.2.2",
+  "version": "0.2.4",
   "description": "MCP Relay agent binary for darwin-x64",
   "os": [
     "darwin"

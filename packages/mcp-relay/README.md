@@ -46,10 +46,17 @@ mcp-relay register
 mcp-relay sync
 mcp-relay sync --dry-run
 mcp-relay sync --sandbox
+mcp-relay connect
+mcp-relay watch
+mcp-relay update [--check]
 mcp-relay backup list
 mcp-relay backup restore --latest
 mcp-relay version
 ```
+
+配置：`mcp-relay config set auto_update true|false`（默认开；watch/connect 约每 6h 自动升级）。
+
+设备若在管理台被删除，客户端会清空本地注册，需重新 `mcp-relay init --url …`。
 
 ## 环境变量
 

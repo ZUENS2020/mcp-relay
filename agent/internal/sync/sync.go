@@ -308,6 +308,26 @@ func (c *Client) report(releaseID string, ok bool, detail map[string]any) error 
 	}, nil)
 }
 
+func (c *Client) ClearRegistration(reason string) {
+	c.clearRegistration(reason)
+}
+
+func (c *Client) clearRegistration(reason string) {
+	c.Cfg.DeviceToken = ""
+	c.Cfg.DeviceID = ""
+	c.Cfg.RelayURL = ""
+	_ = config.Save(c.Res.ConfigPath(), c.Cfg)
+	fmt.Fprintf(os.Stderr, "registration cleared (%s). Re-run: mcp-relay init --url <relay-url>\n", reason)
+}
+
+func (c *Client) handleAuthFailure(status int, body string) error {
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		c.clearRegistration(fmt.Sprintf("HTTP %d", status))
+		return fmt.Errorf("device revoked or unauthorized (%d): %s — run mcp-relay init --url <relay-url>", status, body)
+	}
+	return nil
+}
+
 func (c *Client) getJSON(path string, out any) error {
 	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(c.Cfg.RelayURL, "/")+path, nil)
 	if err != nil {
@@ -321,6 +341,9 @@ func (c *Client) getJSON(path string, out any) error {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
+		if err := c.handleAuthFailure(resp.StatusCode, string(b)); err != nil {
+			return err
+		}
 		return fmt.Errorf("GET %s: %s: %s", path, resp.Status, string(b))
 	}
 	if out == nil {
@@ -352,6 +375,9 @@ func (c *Client) postJSON(path string, body any, headers map[string]string, out 
 	defer resp.Body.Close()
 	rb, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode >= 300 {
+		if err := c.handleAuthFailure(resp.StatusCode, string(rb)); err != nil {
+			return err
+		}
 		return fmt.Errorf("POST %s: %s: %s", path, resp.Status, string(rb))
 	}
 	if out == nil {

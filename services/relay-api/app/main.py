@@ -160,75 +160,29 @@ def filter_servers_for_agent(
     servers: dict[str, Any],
     agent_entry: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    """Resolve servers for one agent. Pinned mcp_servers always wins; no Profile bindings."""
     if not agent_entry:
-        return servers
+        return {}
     if agent_entry.get("enabled") is False:
         return {}
-    # Full mcpServers document pinned on the device wins over binding flags.
     pinned = agent_entry.get("mcp_servers")
     if isinstance(pinned, dict):
         return {str(k): (v if isinstance(v, dict) else {}) for k, v in pinned.items()}
-    flags = agent_entry.get("servers") or {}
-    if not flags:
-        return servers
-    out: dict[str, Any] = {}
-    for sid, cfg in servers.items():
-        if sid in flags and flags[sid] is False:
-            continue
-        out[sid] = cfg
-    return out
+    return {}
 
 
 def build_artifact(profile: str, targets: list[str], agent_config: dict[str, Any] | None = None) -> dict[str, Any]:
-    with db() as conn:
-        logicals = {
-            r["id"]: {
-                "id": r["id"],
-                "display_name": r["display_name"],
-                "transport": r["transport"],
-                "default": json.loads(r["default_json"]),
-                "tags": json.loads(r["tags_json"] or "[]"),
-            }
-            for r in conn.execute("SELECT * FROM logical_servers").fetchall()
-        }
-        bindings = [dict(r) for r in conn.execute("SELECT * FROM bindings WHERE profile=?", (profile,)).fetchall()]
-        packs = [dict(r) for r in conn.execute("SELECT * FROM skill_packs").fetchall()]
-
-    by_target: dict[str, dict[str, Any]] = {t: {} for t in targets if t in TARGETS}
-    for b in bindings:
-        t = b["target"]
-        if t not in by_target:
-            continue
-        if not b["enabled"]:
-            continue
-        lid = b["logical_id"]
-        if lid not in logicals:
-            continue
-        by_target[t][lid] = merge_server(logicals[lid], json.loads(b["overrides_json"] or "{}"))
-
+    """Device/release artifact: only pinned per-agent mcp_servers (Profile bindings unused)."""
     agent_config = agent_config or {}
-    for t in list(by_target.keys()):
-        by_target[t] = filter_servers_for_agent(by_target[t], agent_config.get(t))
-
-    skill_out = []
-    for p in packs:
-        profiles = json.loads(p["profiles_json"] or "[]")
-        if profile not in profiles and profiles:
+    by_target: dict[str, dict[str, Any]] = {}
+    for t in targets:
+        if t not in TARGETS:
             continue
-        tmap = json.loads(p["targets_json"] or "{}")
-        skill_out.append(
-            {
-                "id": p["id"],
-                "version": p["version"],
-                "path": p["path"],
-                "targets": {k: v for k, v in tmap.items() if k in by_target or not targets},
-            }
-        )
-
+        by_target[t] = filter_servers_for_agent({}, agent_config.get(t))
     return {
         "profile": profile,
         "targets": by_target,
-        "skills": skill_out,
+        "skills": [],
         "built_at": utcnow(),
     }
 
@@ -323,9 +277,20 @@ def merge_server(logical: dict[str, Any], overrides: dict[str, Any]) -> dict[str
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+
+class NoCacheStaticFiles(StaticFiles):
+    """Avoid Cloudflare/browser caching stale admin UI assets after deploy."""
+
+    def file_response(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
+
+
 app = FastAPI(title="MCP Relay", version="0.1.0")
 if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.on_event("startup")
@@ -339,26 +304,116 @@ def health() -> dict[str, str]:
     return {"status": "ok", "time": utcnow()}
 
 
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/v1/auth/login")
+def auth_login(body: LoginIn) -> dict[str, Any]:
+    user = body.username.strip()
+    if not (_token_ok(user, ADMIN_USER) and _token_ok(body.password, ADMIN_PASSWORD)):
+        raise HTTPException(401, "invalid username or password")
+    sess = _create_session(ADMIN_USER)
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
+            ("auth.login", json.dumps({"user": ADMIN_USER}), utcnow()),
+        )
+    return {"status": "ok", **sess}
+
+
+@app.post("/api/v1/auth/logout")
+def auth_logout(authorization: str | None = Header(default=None)) -> dict[str, str]:
+    got = _bearer_token(authorization)
+    if got:
+        _SESSIONS.pop(got, None)
+    return {"status": "ok"}
+
+
+@app.get("/api/v1/auth/me")
+def auth_me(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    got = _bearer_token(authorization)
+    if not got:
+        raise HTTPException(401, "login required")
+    sess = _session_valid(got)
+    if sess:
+        return {"user": sess["user"], "expires_at": sess["exp"], "auth": "session"}
+    if ADMIN_TOKEN and _token_ok(got, ADMIN_TOKEN):
+        return {"user": ADMIN_USER, "auth": "admin_token"}
+    raise HTTPException(401, "invalid credentials")
+
+
 @app.get("/")
 def admin_ui() -> FileResponse:
     index = STATIC_DIR / "index.html"
     if not index.exists():
         raise HTTPException(404, "frontend not found")
-    return FileResponse(index)
+    return FileResponse(
+        index,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
 
 
-# --- Auth helpers ---
+ADMIN_TOKEN = (
+    os.environ.get("RELAY_ADMIN_TOKEN") or os.environ.get("RELAY_MCP_ADMIN_TOKEN") or ""
+).strip()
+ADMIN_USER = (os.environ.get("RELAY_ADMIN_USER") or "admin").strip() or "admin"
+ADMIN_PASSWORD = (os.environ.get("RELAY_ADMIN_PASSWORD") or "admin123").strip() or "admin123"
+# UI login sessions: token -> {user, exp_iso}
+_SESSIONS: dict[str, dict[str, str]] = {}
+SESSION_TTL_HOURS = int(os.environ.get("RELAY_SESSION_TTL_HOURS") or "168")
+
+
+def _bearer_token(authorization: str | None, x_device_token: str | None = None) -> str | None:
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if x_device_token:
+        token = x_device_token.strip()
+    return token or None
+
+
+def _token_ok(got: str, expected: str) -> bool:
+    if not got or not expected or len(got) != len(expected):
+        return False
+    return secrets.compare_digest(got.encode("utf-8"), expected.encode("utf-8"))
+
+
+def _session_valid(token: str) -> dict[str, str] | None:
+    sess = _SESSIONS.get(token)
+    if not sess:
+        return None
+    try:
+        exp = datetime.fromisoformat(sess["exp"])
+    except (KeyError, ValueError):
+        _SESSIONS.pop(token, None)
+        return None
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) >= exp:
+        _SESSIONS.pop(token, None)
+        return None
+    return sess
+
+
+def _create_session(username: str) -> dict[str, Any]:
+    from datetime import timedelta
+
+    token = secrets.token_urlsafe(32)
+    exp = datetime.now(timezone.utc) + timedelta(hours=max(1, SESSION_TTL_HOURS))
+    _SESSIONS[token] = {"user": username, "exp": exp.isoformat()}
+    return {"token": token, "user": username, "expires_at": exp.isoformat()}
 
 
 def require_device(
     authorization: str | None = Header(default=None),
     x_device_token: str | None = Header(default=None, alias="X-Device-Token"),
 ) -> sqlite3.Row:
-    token = None
-    if authorization and authorization.lower().startswith("bearer "):
-        token = authorization[7:].strip()
-    if x_device_token:
-        token = x_device_token
+    token = _bearer_token(authorization, x_device_token)
     if not token:
         raise HTTPException(401, "device token required")
     with db() as conn:
@@ -366,6 +421,18 @@ def require_device(
     if not row:
         raise HTTPException(401, "invalid device token")
     return row
+
+
+def require_admin(authorization: str | None = Header(default=None)) -> None:
+    """Accept UI session token or RELAY_ADMIN_TOKEN (MCP/scripts)."""
+    got = _bearer_token(authorization)
+    if not got:
+        raise HTTPException(401, "login required")
+    if _session_valid(got):
+        return
+    if ADMIN_TOKEN and _token_ok(got, ADMIN_TOKEN):
+        return
+    raise HTTPException(401, "invalid credentials")
 
 
 # --- Agent API ---
@@ -387,7 +454,11 @@ class RegisterRequest(BaseModel):
 
 
 @app.post("/api/v1/devices/register")
-def register_device(body: RegisterRequest) -> dict[str, Any]:
+def register_device(
+    body: RegisterRequest,
+    authorization: str | None = Header(default=None),
+    x_device_token: str | None = Header(default=None, alias="X-Device-Token"),
+) -> dict[str, Any]:
     if body.profile not in PROFILES:
         raise HTTPException(400, f"invalid profile: {body.profile}")
     targets = [t for t in body.targets if t in TARGETS]
@@ -404,9 +475,16 @@ def register_device(body: RegisterRequest) -> dict[str, Any]:
     device_id = body.device_id or f"{body.profile}-{secrets.token_hex(6)}"
     token = secrets.token_urlsafe(32)
     now = utcnow()
+    provided = _bearer_token(authorization, x_device_token)
     with db() as conn:
         existing = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
         if existing:
+            # Never hand out an existing device_token without proving possession.
+            if not provided or not _token_ok(provided, existing["device_token"]):
+                raise HTTPException(
+                    409,
+                    "device_id already registered; send Authorization: Bearer <existing device token>",
+                )
             # keep agent_config; refresh detection + union targets with previous
             prev_targets = json.loads(existing["targets_json"] or "[]")
             for tid in prev_targets:
@@ -551,12 +629,20 @@ def sync_report(body: SyncReport, device: sqlite3.Row = Depends(require_device))
 
 @app.websocket("/api/v1/devices/ws")
 async def device_websocket(websocket: WebSocket, token: str = Query(default="")) -> None:
+    """Device long-lived connection for push.apply.
+
+    Auth preference: Authorization Bearer, then first JSON auth message,
+    then legacy ?token= (discouraged — may appear in access logs).
+    """
     from .hub import hub
     from .push import flush_pending, record_push_ack
 
     await websocket.accept()
     device_id: str | None = None
     try:
+        auth_hdr = websocket.headers.get("authorization") or ""
+        if auth_hdr.lower().startswith("bearer "):
+            token = auth_hdr[7:].strip()
         if not token:
             first = await websocket.receive_text()
             try:
@@ -624,7 +710,7 @@ async def device_websocket(websocket: WebSocket, token: str = Query(default=""))
             await hub.disconnect(device_id, websocket)
 
 
-# --- Admin API (open for MVP; protect via CF Access in front) ---
+# --- Admin API (requires RELAY_ADMIN_TOKEN / RELAY_MCP_ADMIN_TOKEN) ---
 
 
 class LogicalIn(BaseModel):
@@ -635,7 +721,7 @@ class LogicalIn(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
-@app.get("/api/v1/logical-servers")
+@app.get("/api/v1/logical-servers", dependencies=[Depends(require_admin)])
 def list_logical() -> list[dict[str, Any]]:
     with db() as conn:
         rows = conn.execute("SELECT * FROM logical_servers").fetchall()
@@ -651,7 +737,7 @@ def list_logical() -> list[dict[str, Any]]:
     ]
 
 
-@app.post("/api/v1/logical-servers")
+@app.post("/api/v1/logical-servers", dependencies=[Depends(require_admin)])
 def upsert_logical(body: LogicalIn) -> dict[str, str]:
     with db() as conn:
         conn.execute(
@@ -665,7 +751,7 @@ def upsert_logical(body: LogicalIn) -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.delete("/api/v1/logical-servers/{logical_id}")
+@app.delete("/api/v1/logical-servers/{logical_id}", dependencies=[Depends(require_admin)])
 def delete_logical(logical_id: str) -> dict[str, str]:
     with db() as conn:
         conn.execute("DELETE FROM bindings WHERE logical_id=?", (logical_id,))
@@ -685,7 +771,7 @@ class BindingIn(BaseModel):
     overrides: dict[str, Any] = Field(default_factory=dict)
 
 
-@app.get("/api/v1/bindings")
+@app.get("/api/v1/bindings", dependencies=[Depends(require_admin)])
 def list_bindings() -> list[dict[str, Any]]:
     with db() as conn:
         rows = conn.execute("SELECT * FROM bindings").fetchall()
@@ -702,7 +788,7 @@ def list_bindings() -> list[dict[str, Any]]:
     ]
 
 
-@app.post("/api/v1/bindings")
+@app.post("/api/v1/bindings", dependencies=[Depends(require_admin)])
 def upsert_binding(body: BindingIn) -> dict[str, str]:
     if body.profile not in PROFILES or body.target not in TARGETS:
         raise HTTPException(400, "invalid profile/target")
@@ -726,7 +812,7 @@ def upsert_binding(body: BindingIn) -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.delete("/api/v1/bindings/{binding_id}")
+@app.delete("/api/v1/bindings/{binding_id}", dependencies=[Depends(require_admin)])
 def delete_binding(binding_id: int) -> dict[str, str]:
     with db() as conn:
         conn.execute("DELETE FROM bindings WHERE id=?", (binding_id,))
@@ -737,7 +823,7 @@ def delete_binding(binding_id: int) -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/v1/preview")
+@app.get("/api/v1/preview", dependencies=[Depends(require_admin)])
 def preview_render(profile: str = Query(...), target: str = Query(...)) -> dict[str, Any]:
     if profile not in PROFILES or target not in TARGETS:
         raise HTTPException(400, "invalid profile/target")
@@ -751,12 +837,12 @@ def preview_render(profile: str = Query(...), target: str = Query(...)) -> dict[
     }
 
 
-@app.get("/api/v1/meta")
+@app.get("/api/v1/meta", dependencies=[Depends(require_admin)])
 def meta() -> dict[str, Any]:
     return {"targets": list(TARGETS), "profiles": list(PROFILES), "version": "0.1.0"}
 
 
-@app.post("/api/v1/releases")
+@app.post("/api/v1/releases", dependencies=[Depends(require_admin)])
 def create_release(changelog: str = "manual") -> dict[str, Any]:
     # build for all profiles into one multi-artifact (agents still filter)
     combined = {p: build_artifact(p, list(TARGETS)) for p in PROFILES}
@@ -774,14 +860,38 @@ def create_release(changelog: str = "manual") -> dict[str, Any]:
     return {"id": rid, "etag": etag}
 
 
-@app.get("/api/v1/devices")
+@app.get("/api/v1/devices", dependencies=[Depends(require_admin)])
 def list_devices() -> list[dict[str, Any]]:
     with db() as conn:
         rows = conn.execute("SELECT * FROM devices ORDER BY last_seen_at DESC, created_at DESC").fetchall()
         return [enrich_device(device_dict(r), conn) for r in rows]
 
 
-@app.get("/api/v1/push-deliveries")
+@app.delete("/api/v1/devices/{device_id}", dependencies=[Depends(require_admin)])
+async def delete_device(device_id: str) -> dict[str, Any]:
+    """Remove device and revoke its token. Client must re-init with URL to return."""
+    from .hub import hub
+
+    with db() as conn:
+        row = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "device not found")
+        conn.execute("DELETE FROM sync_reports WHERE device_id=?", (device_id,))
+        conn.execute("DELETE FROM push_deliveries WHERE device_id=?", (device_id,))
+        conn.execute("DELETE FROM devices WHERE device_id=?", (device_id,))
+        conn.execute(
+            "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
+            (
+                "device.delete",
+                json.dumps({"device_id": device_id, "hostname": row["hostname"], "profile": row["profile"]}),
+                utcnow(),
+            ),
+        )
+    await hub.force_disconnect(device_id, code=4001, reason="device deleted")
+    return {"status": "deleted", "device_id": device_id}
+
+
+@app.get("/api/v1/push-deliveries", dependencies=[Depends(require_admin)])
 def list_push_deliveries(
     device_id: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
@@ -792,37 +902,29 @@ def list_push_deliveries(
         return list_deliveries(conn, device_id=device_id, limit=limit)
 
 
-@app.get("/api/v1/devices/{device_id}")
+@app.get("/api/v1/devices/{device_id}", dependencies=[Depends(require_admin)])
 def get_device(device_id: str) -> dict[str, Any]:
     with db() as conn:
         row = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
     if not row:
         raise HTTPException(404, "device not found")
     d = device_dict(row)
-    # enrichment: binding defaults + effective servers per agent
+    # enrichment: effective servers per agent from pinned docs only
     artifact = build_artifact_for_device(d)
-    logicals = list_logical()
-    binding_defaults: dict[str, list[str]] = {}
-    with db() as conn:
-        for t in TARGETS:
-            rows = conn.execute(
-                "SELECT logical_id FROM bindings WHERE profile=? AND target=? AND enabled=1",
-                (d["profile"], t),
-            ).fetchall()
-            binding_defaults[t] = [r["logical_id"] for r in rows]
     agents_view = []
     for t in d["targets"]:
         ac = (d.get("agent_config") or {}).get(t) or {"enabled": True, "servers": {}}
         effective_map = (artifact.get("targets") or {}).get(t, {}) or {}
+        pinned = ac.get("mcp_servers")
+        saved_doc = {"mcpServers": pinned if isinstance(pinned, dict) else {}}
         agents_view.append(
             {
                 "id": t,
                 "enabled": ac.get("enabled", True),
                 "servers": ac.get("servers") or {},
-                "mcp_servers": ac.get("mcp_servers"),
-                "binding_defaults": binding_defaults.get(t, []),
+                "mcp_servers": pinned if isinstance(pinned, dict) else None,
                 "effective_servers": list(effective_map.keys()),
-                "mcp_document": {"mcpServers": effective_map},
+                "mcp_document": saved_doc,
                 "detected": next((x for x in (d.get("detected") or []) if x.get("id") == t), None),
             }
         )
@@ -838,14 +940,12 @@ def get_device(device_id: str) -> dict[str, Any]:
                 "enabled": False,
                 "servers": {},
                 "mcp_servers": None,
-                "binding_defaults": binding_defaults.get(det["id"], []),
                 "effective_servers": [],
                 "mcp_document": {"mcpServers": {}},
                 "detected": det,
             }
         )
     d["agents"] = agents_view
-    d["logical_servers"] = logicals
     d["effective_artifact"] = artifact
     with db() as conn:
         return enrich_device(d, conn)
@@ -859,7 +959,11 @@ class AgentConfigPatch(BaseModel):
 
 
 def _normalize_agent_entry(entry: dict[str, Any]) -> dict[str, Any]:
-    """Accept UI/API shapes: flags and/or full mcp document."""
+    """Accept UI/API shapes: flags and/or full mcp document.
+
+    Explicit mcp_document / mcp_servers / mcpServers always replaces the pinned
+    document. Omitting all three keeps the previous pin (caller merges).
+    """
     cur: dict[str, Any] = {"enabled": True, "servers": {}}
     if "enabled" in entry:
         cur["enabled"] = bool(entry["enabled"])
@@ -871,32 +975,38 @@ def _normalize_agent_entry(entry: dict[str, Any]) -> dict[str, Any]:
         mcp_servers = entry["mcpServers"]
     if mcp_servers is None and isinstance(entry.get("mcp_document"), dict):
         doc = entry["mcp_document"]
-        mcp_servers = doc.get("mcpServers") if "mcpServers" in doc else doc
+        if "mcpServers" in doc:
+            mcp_servers = doc.get("mcpServers")
+        elif "mcp_servers" in doc:
+            mcp_servers = doc.get("mcp_servers")
+        elif doc and all(isinstance(v, dict) for v in doc.values()):
+            # bare servers map sent as mcp_document
+            mcp_servers = doc
     if isinstance(mcp_servers, dict):
         cleaned = {str(k): (v if isinstance(v, dict) else {}) for k, v in mcp_servers.items()}
         cur["mcp_servers"] = cleaned
-        # keep flags in sync with document keys
         flags = dict(cur.get("servers") or {})
         for sid in cleaned:
             flags[sid] = True
         cur["servers"] = flags
     elif "mcp_servers" in entry and entry["mcp_servers"] is None:
-        # explicit clear → fall back to binding flags
+        # explicit clear of pinned document
         cur.pop("mcp_servers", None)
     return cur
 
 
-@app.patch("/api/v1/devices/{device_id}/agents")
+@app.patch("/api/v1/devices/{device_id}/agents", dependencies=[Depends(require_admin)])
 async def patch_device_agents(device_id: str, body: AgentConfigPatch) -> dict[str, Any]:
     from .hub import hub
     from .push import enqueue_push
 
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
         if not row:
             raise HTTPException(404, "device not found")
         d = device_dict(row)
-        targets = d["targets"]
+        targets = list(d["targets"])
         cfg = dict(d.get("agent_config") or {})
         if body.targets is not None:
             targets = [t for t in body.targets if t in TARGETS]
@@ -907,11 +1017,10 @@ async def patch_device_agents(device_id: str, body: AgentConfigPatch) -> dict[st
                 if not isinstance(entry, dict):
                     raise HTTPException(400, f"agent_config.{agent} must be object")
                 prev = dict(cfg.get(agent) or {"enabled": True, "servers": {}})
+                provides_doc = any(k in entry for k in ("mcp_servers", "mcpServers", "mcp_document"))
                 nxt = _normalize_agent_entry(entry)
-                # merge: preserve previous mcp_servers unless explicitly provided/cleared
-                if "mcp_servers" not in entry and "mcpServers" not in entry and "mcp_document" not in entry:
-                    if "mcp_servers" in prev:
-                        nxt["mcp_servers"] = prev["mcp_servers"]
+                if not provides_doc and "mcp_servers" in prev:
+                    nxt["mcp_servers"] = prev["mcp_servers"]
                 if "enabled" not in entry:
                     nxt["enabled"] = prev.get("enabled", True)
                 if "servers" in entry:
@@ -973,48 +1082,58 @@ def bootstrap_agent(
     body: BootstrapIn,
     device: sqlite3.Row = Depends(require_device),
 ) -> dict[str, Any]:
-    """Upload local mcpServers when the device agent has no pinned config yet."""
+    """Upload local mcpServers only when the agent still has no pinned config.
+
+    Uses BEGIN IMMEDIATE so a concurrent admin save cannot be overwritten.
+    """
     if target not in TARGETS:
         raise HTTPException(400, f"invalid target: {target}")
     servers = _extract_mcp_servers(body)
     cleaned = {str(k): (v if isinstance(v, dict) else {}) for k, v in servers.items()}
-    d = device_dict(device)
-    cfg = dict(d.get("agent_config") or {})
-    prev = dict(cfg.get(target) or {})
-    existing = prev.get("mcp_servers")
-    if isinstance(existing, dict) and len(existing) > 0:
-        return {
-            "status": "skipped",
-            "reason": "already_configured",
-            "device_id": d["device_id"],
-            "target": target,
-            "server_count": len(existing),
-        }
-    entry = {
-        "enabled": True,
-        "servers": {sid: True for sid in cleaned},
-        "mcp_servers": cleaned,
-    }
-    cfg[target] = entry
-    targets = list(d["targets"])
-    if target not in targets:
-        targets.append(target)
+    device_id = device["device_id"]
     with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM devices WHERE device_id=?", (device_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "device not found")
+        d = device_dict(row)
+        cfg = dict(d.get("agent_config") or {})
+        prev = dict(cfg.get(target) or {})
+        # Any pinned document (including empty {}) means admin/client already decided —
+        # never let a concurrent bootstrap overwrite a just-saved config.
+        existing = prev.get("mcp_servers")
+        if "mcp_servers" in prev and isinstance(existing, dict):
+            return {
+                "status": "skipped",
+                "reason": "already_configured",
+                "device_id": device_id,
+                "target": target,
+                "server_count": len(existing),
+            }
+        entry = {
+            "enabled": True,
+            "servers": {sid: True for sid in cleaned},
+            "mcp_servers": cleaned,
+        }
+        cfg[target] = entry
+        targets = list(d["targets"])
+        if target not in targets:
+            targets.append(target)
         conn.execute(
             "UPDATE devices SET targets_json=?, agent_config_json=?, last_seen_at=? WHERE device_id=?",
-            (json.dumps(targets), json.dumps(cfg), utcnow(), d["device_id"]),
+            (json.dumps(targets), json.dumps(cfg), utcnow(), device_id),
         )
         conn.execute(
             "INSERT INTO audit_log(action, detail_json, created_at) VALUES (?,?,?)",
             (
                 "device.agents.bootstrap",
-                json.dumps({"device_id": d["device_id"], "target": target, "server_count": len(cleaned)}),
+                json.dumps({"device_id": device_id, "target": target, "server_count": len(cleaned)}),
                 utcnow(),
             ),
         )
     return {
         "status": "ok",
-        "device_id": d["device_id"],
+        "device_id": device_id,
         "target": target,
         "server_count": len(cleaned),
         "servers": list(cleaned.keys()),
@@ -1028,7 +1147,7 @@ class ScriptBody(BaseModel):
     device_ids: list[str] | None = None  # optional filter
 
 
-@app.post("/api/v1/scripts/parse")
+@app.post("/api/v1/scripts/parse", dependencies=[Depends(require_admin)])
 def scripts_parse(body: ScriptBody) -> dict[str, Any]:
     from .script_parser import parse_script
 
@@ -1068,7 +1187,7 @@ def scripts_parse(body: ScriptBody) -> dict[str, Any]:
     }
 
 
-@app.post("/api/v1/scripts/apply")
+@app.post("/api/v1/scripts/apply", dependencies=[Depends(require_admin)])
 async def scripts_apply(body: ScriptBody) -> dict[str, Any]:
     from .hub import hub
     from .push import enqueue_push
@@ -1139,7 +1258,7 @@ async def scripts_apply(body: ScriptBody) -> dict[str, Any]:
     }
 
 
-@app.get("/api/v1/scripts/examples")
+@app.get("/api/v1/scripts/examples", dependencies=[Depends(require_admin)])
 def scripts_examples() -> dict[str, str]:
     return {
         "yaml": """version: 1
@@ -1168,7 +1287,7 @@ set profile:windows-desktop agents=cursor,pi,codex,claude-code
     }
 
 
-@app.get("/api/v1/releases/{release_id}/diff/{prev_id}")
+@app.get("/api/v1/releases/{release_id}/diff/{prev_id}", dependencies=[Depends(require_admin)])
 def release_diff(release_id: str, prev_id: str) -> dict[str, Any]:
     with db() as conn:
         a = conn.execute("SELECT * FROM releases WHERE id=?", (release_id,)).fetchone()
@@ -1181,7 +1300,7 @@ def release_diff(release_id: str, prev_id: str) -> dict[str, Any]:
     }
 
 
-@app.get("/api/v1/skill-packs")
+@app.get("/api/v1/skill-packs", dependencies=[Depends(require_admin)])
 def list_skills() -> list[dict[str, Any]]:
     with db() as conn:
         rows = conn.execute("SELECT * FROM skill_packs").fetchall()
@@ -1197,7 +1316,7 @@ def list_skills() -> list[dict[str, Any]]:
     ]
 
 
-@app.get("/api/v1/audit")
+@app.get("/api/v1/audit", dependencies=[Depends(require_admin)])
 def list_audit(limit: int = 50) -> list[dict[str, Any]]:
     with db() as conn:
         rows = conn.execute(

@@ -66,7 +66,7 @@ Config: `mcp-relay config set auto_update true|false` (default on).
 ```
 Device ──connect/ws──▶ Relay API ──push.apply──▶ Agent writes local mcp.json
         sync fallback ▲        │
-Admin UI: online status | push history | agent config
+Admin: Config (device · agent · mcp.json) · Scripts · Overview · Audit
                         ▲
 Cursor etc. ── MCP /mcp ── read/write devices, trigger push
 ```
@@ -75,11 +75,31 @@ Cursor etc. ── MCP /mcp ── read/write devices, trigger push
 
 - Run `mcp-relay connect` (or `watch`, which includes WS) to show **green online** in the admin UI
 - Saving agent config in the console **pushes immediately**; offline devices queue until reconnect
-- Sidebar **Push history** shows `queued → sent → acked/failed`
+- Delivery status via `GET /api/v1/push-deliveries` or MCP `relay_list_push_deliveries` (`queued → sent → acked/failed`)
+
+### Admin Config page
+
+- Editor shows only the agent's **saved** `mcpServers` document (no Profile binding defaults)
+- **CodeMirror 6**: highlighting, auto-indent, JSON lint; **Format** or `Ctrl/⌘+Shift+F`
+- **Restore last save**: discard unsaved edits (does not clear back to Profile defaults)
+- **Delete device**: revokes token and closes WS; client must `mcp-relay init --url …` again
+
+### Admin login
+
+The console uses **username/password** (no admin-token prompt):
+
+| | Default | Override |
+|---|---|---|
+| Username | `admin` | `RELAY_ADMIN_USER` |
+| Password | `admin123` | `RELAY_ADMIN_PASSWORD` |
+
+Login issues a session stored in tab `sessionStorage`; use **Log out** in the sidebar. Change the default password in production.
+
+Synced artifacts use each agent's **saved mcp.json** only (Profile bindings are not merged).
 
 ### Relay MCP admin API
 
-Set `RELAY_MCP_ADMIN_TOKEN` on the server, then add Streamable HTTP MCP in Cursor:
+Optionally set `RELAY_ADMIN_TOKEN` / `RELAY_MCP_ADMIN_TOKEN` for MCP tools and scripts (Bearer; independent of UI login):
 
 ```json
 {
@@ -94,16 +114,27 @@ Set `RELAY_MCP_ADMIN_TOKEN` on the server, then add Streamable HTTP MCP in Curso
 }
 ```
 
-Tools include `relay_list_devices`, `relay_get_device`, `relay_patch_device_agents` (save + push), `relay_list_push_deliveries`, `relay_apply_script`, etc.
+Tools include `relay_list_devices`, `relay_get_device`, `relay_delete_device`, `relay_patch_device_agents` (save + push), `relay_list_push_deliveries`, `relay_apply_script`, etc.
 
+
+## Deploy (server)
 
 ```bash
 bash scripts/deploy-nec.sh
 ```
 
+Suggested `.env` (or host env) next to `docker-compose.yml`:
+
+```bash
+RELAY_ADMIN_USER=admin
+RELAY_ADMIN_PASSWORD=change-me
+# Optional: MCP / script Bearer (separate from UI login)
+RELAY_ADMIN_TOKEN=
+```
+
 - Health: `GET /health`
 - Public tunnel notes: [`docs/cloudflare-tunnel.md`](./docs/cloudflare-tunnel.md)
-- npm publish: [`docs/npm-publish.md`](./docs/npm-publish.md) (tag `cli-v*`)
+- npm publish: [`docs/npm-publish.md`](./docs/npm-publish.md) (tag `cli-v*`, CLI **0.2.4**)
 
 ## Local development
 
@@ -117,7 +148,7 @@ uvicorn app.main:app --host 127.0.0.1 --port 8740
 bash scripts/build-agent-binaries.sh
 ```
 
-Admin UI follows the **Suzuka Design System**. The Config page uses resizable columns (device · agent · mcp.json).
+Admin UI follows the **Suzuka Design System**. Config page: resizable columns (device · agent · mcp.json).
 
 ## License
 

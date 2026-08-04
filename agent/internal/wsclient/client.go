@@ -31,15 +31,17 @@ func Run(c *syncer.Client) error {
 		return fmt.Errorf("unsupported relay url scheme: %s", u.Scheme)
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + "/api/v1/devices/ws"
-	q := u.Query()
-	q.Set("token", c.Cfg.DeviceToken)
-	u.RawQuery = q.Encode()
+	// Do not put the device token in the query string (access-log leak risk).
+	u.RawQuery = ""
 
 	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second}
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+c.Cfg.DeviceToken)
-	conn, _, err := dialer.Dial(u.String(), header)
+	conn, resp, err := dialer.Dial(u.String(), header)
 	if err != nil {
+		if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {
+			c.ClearRegistration("websocket auth failed")
+		}
 		return err
 	}
 	defer conn.Close()
@@ -48,6 +50,9 @@ func Run(c *syncer.Client) error {
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
+			if websocket.IsCloseError(err, 4001) {
+				c.ClearRegistration("device deleted on server")
+			}
 			return err
 		}
 		var msg map[string]any

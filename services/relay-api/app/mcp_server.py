@@ -6,7 +6,9 @@ import json
 import os
 from typing import Any
 
-ADMIN_TOKEN = os.environ.get("RELAY_MCP_ADMIN_TOKEN", "")
+ADMIN_TOKEN = (
+    os.environ.get("RELAY_MCP_ADMIN_TOKEN") or os.environ.get("RELAY_ADMIN_TOKEN") or ""
+).strip()
 
 
 def _tools_impl() -> Any:
@@ -20,6 +22,14 @@ def _tools_impl() -> Any:
         from .main import list_devices
 
         return json.dumps(list_devices(), indent=2, ensure_ascii=False)
+
+    @mcp.tool()
+    async def relay_delete_device(device_id: str) -> str:
+        """Delete a device and revoke its token. Client must re-run init --url to come back."""
+        from .main import delete_device
+
+        result = await delete_device(device_id)
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     @mcp.tool()
     def relay_get_device(device_id: str) -> str:

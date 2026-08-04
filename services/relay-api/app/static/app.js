@@ -1,15 +1,23 @@
+import { McpJsonEditor } from "./mcp-editor.js?v=20260804k";
+
+const SESSION_KEY = "relay-admin-token";
+
 const state = {
-  servers: [],
-  bindings: [],
   devices: [],
-  skills: [],
   audit: [],
-  pushDeliveries: [],
   view: "config",
   selectedDeviceId: null,
   selectedAgentId: null,
   deviceDetail: null,
   scriptExamples: null,
+  /** Last successfully saved mcp.json text (restore target). */
+  lastSavedMcpText: "",
+  /** Bumped to invalidate in-flight refresh races. */
+  dataEpoch: 0,
+  /** Bumped on each successful save; refresh must not apply older GETs. */
+  savedGen: 0,
+  savingMcp: false,
+  authed: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -22,17 +30,119 @@ function toast(msg) {
   setTimeout(() => el.classList.remove("show"), 2200);
 }
 
+function getSessionToken() {
+  return sessionStorage.getItem(SESSION_KEY);
+}
+
+function setSessionToken(token) {
+  sessionStorage.setItem(SESSION_KEY, token);
+}
+
+function clearSessionToken() {
+  sessionStorage.removeItem(SESSION_KEY);
+}
+
+function showLogin(errorMsg = "") {
+  state.authed = false;
+  const gate = $("#login-gate");
+  const shell = $("#app-shell");
+  gate?.classList.remove("hidden");
+  shell?.classList.add("hidden");
+  const err = $("#login-error");
+  if (err) {
+    if (errorMsg) {
+      err.textContent = errorMsg;
+      err.classList.remove("hidden");
+    } else {
+      err.textContent = "";
+      err.classList.add("hidden");
+    }
+  }
+  const pass = $("#login-pass");
+  if (pass) pass.value = "";
+  $("#login-user")?.focus();
+}
+
+function showApp() {
+  state.authed = true;
+  $("#login-gate")?.classList.add("hidden");
+  $("#app-shell")?.classList.remove("hidden");
+}
+
 async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  const admin = getSessionToken();
+  if (admin && !headers.Authorization) {
+    headers.Authorization = `Bearer ${admin}`;
+  }
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
     ...opts,
+    headers,
   });
+  if (res.status === 401 || res.status === 503) {
+    const text = await res.text();
+    if (path.startsWith("/api/v1/") && !path.includes("/devices/me") && !path.includes("/devices/register") && !path.includes("/auth/login")) {
+      const err = new Error(`${res.status}: ${text}`);
+      err.adminAuth = true;
+      throw err;
+    }
+    throw new Error(`${res.status}: ${text}`);
+  }
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`${res.status}: ${text}`);
   }
   if (res.status === 204) return null;
   return res.json();
+}
+
+async function login(username, password) {
+  const res = await fetch("/api/v1/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(res.status === 401 ? "用户名或密码错误" : text);
+  }
+  const data = await res.json();
+  setSessionToken(data.token);
+  return data;
+}
+
+async function logout() {
+  const token = getSessionToken();
+  try {
+    if (token) {
+      await fetch("/api/v1/auth/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
+  } catch {
+    /* ignore */
+  }
+  clearSessionToken();
+  showLogin();
+}
+
+async function ensureSession() {
+  if (state.authed && getSessionToken()) return true;
+  const token = getSessionToken();
+  if (!token) {
+    showLogin();
+    return false;
+  }
+  try {
+    await api("/api/v1/auth/me");
+    showApp();
+    return true;
+  } catch {
+    clearSessionToken();
+    showLogin("登录已过期，请重新登录");
+    return false;
+  }
 }
 
 function fmtTime(v) {
@@ -68,15 +178,35 @@ function applyTheme(theme) {
   localStorage.setItem("relay-theme", theme);
   const btn = $("#btn-theme");
   const night = theme === "night";
-  btn.textContent = night ? "主题：夜间" : "主题：日间";
-  btn.setAttribute("aria-pressed", night ? "true" : "false");
+  if (btn) {
+    btn.textContent = night ? "主题：夜间" : "主题：日间";
+    btn.setAttribute("aria-pressed", night ? "true" : "false");
+  }
+  McpJsonEditor.setNight(night);
+}
+
+function mcpGet() {
+  return McpJsonEditor.getValue();
+}
+
+function mcpSet(text) {
+  McpJsonEditor.setValue(text ?? "");
+}
+
+function mcpSetReadOnly(ro) {
+  const el = $("#mcp-editor");
+  McpJsonEditor.setReadOnly(ro);
+  el?.classList.toggle("is-disabled", !!ro);
 }
 
 function renderOverview() {
-  $("#stat-servers").textContent = state.servers.length;
-  $("#stat-bindings").textContent = state.bindings.length;
-  $("#stat-devices").textContent = state.devices.length;
-  $("#stat-skills").textContent = state.skills.length;
+  const online = state.devices.filter((d) => d.online).length;
+  const set = (id, v) => {
+    const el = $(id);
+    if (el) el.textContent = v;
+  };
+  set("#stat-devices", state.devices.length);
+  set("#stat-online", online);
 
   const rows = state.devices
     .slice()
@@ -87,39 +217,19 @@ function renderOverview() {
     .map(
       (d) => `<tr>
       <td class="mono">${esc(d.device_id)}</td>
-      <td>${esc(d.profile)}</td>
+      <td>${esc(d.hostname || "—")}</td>
       <td>${(d.targets || []).map((t) => `<span class="badge">${esc(t)}</span>`).join(" ")}</td>
       <td>${fmtTime(d.last_sync_at)}</td>
     </tr>`
     )
     .join("");
 
-  $("#overview-devices").innerHTML = rows
-    ? `<table><thead><tr><th>设备</th><th>Profile</th><th>Agent</th><th>最近同步</th></tr></thead><tbody>${rows}</tbody></table>`
-    : `<p class="muted pad">暂无已注册设备</p>`;
-}
-
-function renderServers() {
-  $("#servers-table").innerHTML = `
-    <table>
-      <thead><tr><th>标识</th><th>传输</th><th>默认配置</th><th>标签</th><th></th></tr></thead>
-      <tbody>
-        ${state.servers
-          .map(
-            (s) => `<tr>
-          <td><strong>${esc(s.id)}</strong><div class="muted">${esc(s.display_name || "")}</div></td>
-          <td><span class="badge">${esc(s.transport)}</span></td>
-          <td class="mono">${esc(JSON.stringify(s.default))}</td>
-          <td>${(s.tags || []).map((t) => `<span class="badge">${esc(t)}</span>`).join(" ")}</td>
-          <td>
-            <button class="btn" data-edit-server="${esc(s.id)}" type="button">编辑</button>
-            <button class="btn btn-danger" data-del-server="${esc(s.id)}" type="button">删除</button>
-          </td>
-        </tr>`
-          )
-          .join("")}
-      </tbody>
-    </table>`;
+  const box = $("#overview-devices");
+  if (box) {
+    box.innerHTML = rows
+      ? `<table><thead><tr><th>设备</th><th>主机</th><th>Agent</th><th>最近同步</th></tr></thead><tbody>${rows}</tbody></table>`
+      : `<p class="muted pad">暂无已注册设备</p>`;
+  }
 }
 
 function pushStatusBadge(d) {
@@ -153,56 +263,33 @@ function presenceDot(online) {
   return `<span class="presence-dot ${online ? "online" : "offline"}" title="${tip}"></span>`;
 }
 
-function renderDevicesTable() {
-  const el = $("#devices-table");
-  if (!el) return;
-  if (!state.devices.length) {
-    el.innerHTML = `<p class="muted pad">暂无设备。在客户端运行 <span class="mono">relay-agent register</span></p>`;
-    return;
-  }
-  el.innerHTML = `
-    <table>
-      <thead><tr><th>状态</th><th>设备 ID</th><th>主机名</th><th>Profile</th><th>Agent</th><th>版本</th><th>推送</th><th>最近同步</th><th></th></tr></thead>
-      <tbody>
-        ${state.devices
-          .map(
-            (d) => `<tr>
-          <td>${presenceDot(d.online)}</td>
-          <td class="mono">${esc(d.device_id)}</td>
-          <td>${esc(d.hostname || "—")}</td>
-          <td>${esc(d.profile)}</td>
-          <td>${(d.targets || []).map((t) => `<span class="badge">${esc(t)}</span>`).join(" ")}</td>
-          <td>${esc(d.agent_version || "—")}</td>
-          <td>${pushStatusBadge(d)}${d.pending_push_count ? `<span class="muted"> (${d.pending_push_count})</span>` : ""}</td>
-          <td>${fmtTime(d.last_sync_at)}</td>
-          <td><button class="btn" type="button" data-open-config="${esc(d.device_id)}">去配置</button></td>
-        </tr>`
-          )
-          .join("")}
-      </tbody>
-    </table>`;
-}
-
 function renderDevicesList() {
-  $("#device-count").textContent = `${state.devices.length}`;
+  const countEl = $("#device-count");
+  const listEl = $("#devices-list");
+  if (!countEl || !listEl) return;
+  countEl.textContent = `${state.devices.length}`;
   if (!state.devices.length) {
-    $("#devices-list").innerHTML =
-      `<p class="muted pad">暂无设备。运行 <span class="mono">relay-agent register</span></p>`;
+    listEl.innerHTML =
+      `<p class="muted pad">暂无设备。运行 <span class="mono">mcp-relay init --url … && mcp-relay sync</span></p>`;
     return;
   }
-  $("#devices-list").innerHTML = state.devices
+  listEl.innerHTML = state.devices
     .map((d) => {
       const active = d.device_id === state.selectedDeviceId ? "active" : "";
       const agents = (d.targets || []).map((t) => `<span class="badge">${esc(t)}</span>`).join(" ");
-      return `<button type="button" class="device-row ${active}" data-select-device="${esc(d.device_id)}" role="option" aria-selected="${active ? "true" : "false"}">
-        <div class="device-row-top">
-          <span class="device-row-title">${presenceDot(d.online)}<strong class="mono">${esc(d.hostname || d.device_id)}</strong></span>
-          <span class="badge">${esc(d.profile)}</span>
+      return `<div class="device-row ${active}" role="option" aria-selected="${active ? "true" : "false"}">
+        <button type="button" class="device-row-main" data-select-device="${esc(d.device_id)}">
+          <div class="device-row-top">
+            <span class="device-row-title">${presenceDot(d.online)}<strong class="mono">${esc(d.hostname || d.device_id)}</strong></span>
+          </div>
+          <div class="device-row-meta muted">${esc(d.device_id)}</div>
+          <div class="device-row-agents">${agents || '<span class="muted">无 Agent</span>'}</div>
+          <div class="device-row-meta">${pushStatusBadge(d)} <span class="muted">最近可见 ${fmtTime(d.last_seen_at || d.last_sync_at)}</span></div>
+        </button>
+        <div class="device-row-actions">
+          <button class="btn btn-danger btn-xs" type="button" data-del-device="${esc(d.device_id)}" title="删除后客户端须重新 init --url">删除</button>
         </div>
-        <div class="device-row-meta muted">${esc(d.device_id)}</div>
-        <div class="device-row-agents">${agents || '<span class="muted">无 Agent</span>'}</div>
-        <div class="device-row-meta">${pushStatusBadge(d)} <span class="muted">最近可见 ${fmtTime(d.last_seen_at || d.last_sync_at)}</span></div>
-      </button>`;
+      </div>`;
     })
     .join("");
 }
@@ -244,45 +331,91 @@ function renderAgentsList() {
     .join("");
 }
 
-function renderMcpEditor() {
-  const editor = $("#mcp-editor");
+function savedMcpTextForAgent(agent) {
+  const doc = agent?.mcp_document || { mcpServers: {} };
+  return JSON.stringify(doc, null, 2);
+}
+
+function isMcpDirty() {
+  if (!state.selectedAgentId) return false;
+  return mcpGet() !== state.lastSavedMcpText;
+}
+
+function updateMcpChrome(agent, { dirty = false } = {}) {
   const enabled = $("#agent-enabled");
   const saveBtn = $("#btn-mcp-save");
   const resetBtn = $("#btn-mcp-reset");
+  const formatBtn = $("#btn-mcp-format");
+  $("#mcp-title").textContent = `${agent.id} · mcp.json`;
+  $("#mcp-path").textContent = agent.detected?.path || `同步目标：${agent.id}`;
+  $("#mcp-hint").textContent = dirty
+    ? "有未保存修改。点「刷新」不会覆盖编辑器内容。"
+    : agent.mcp_servers
+      ? "CodeMirror · Tab 缩进 · Ctrl/⌘+Shift+F 格式化。未保存编辑可「恢复上次保存」。"
+      : "尚未保存固定文档（空文档）。编辑后保存才会下发；格式化：Ctrl/⌘+Shift+F。";
+  mcpSetReadOnly(false);
+  enabled.disabled = false;
+  saveBtn.disabled = !!state.savingMcp;
+  resetBtn.disabled = !!state.savingMcp;
+  if (formatBtn) formatBtn.disabled = !!state.savingMcp;
+}
+
+function renderMcpEditor({ force = true } = {}) {
+  const enabled = $("#agent-enabled");
+  const saveBtn = $("#btn-mcp-save");
+  const resetBtn = $("#btn-mcp-reset");
+  const formatBtn = $("#btn-mcp-format");
   const agent = currentAgent();
   if (!state.deviceDetail || !agent) {
     $("#mcp-title").textContent = "mcp.json";
     $("#mcp-path").textContent = "—";
     $("#mcp-hint").textContent = "右侧是该 Agent 的完整 MCP 文档，不按单个服务拆开编辑。";
-    editor.value = "";
-    editor.disabled = true;
+    if (force) {
+      mcpSet("");
+      state.lastSavedMcpText = "";
+    }
+    mcpSetReadOnly(true);
     enabled.checked = false;
     enabled.disabled = true;
     saveBtn.disabled = true;
     resetBtn.disabled = true;
+    if (formatBtn) formatBtn.disabled = true;
     return;
   }
-  const doc = agent.mcp_document || { mcpServers: {} };
-  $("#mcp-title").textContent = `${agent.id} · mcp.json`;
-  $("#mcp-path").textContent = agent.detected?.path || `同步目标：${agent.id}`;
-  $("#mcp-hint").textContent = agent.mcp_servers
-    ? "已固定整份 mcpServers（保存会覆盖）。重置可回到 Profile 默认渲染。"
-    : "当前为 Profile 绑定渲染结果。保存后以编辑器内容为准下发。";
-  editor.value = JSON.stringify(doc, null, 2);
-  editor.disabled = false;
-  enabled.disabled = false;
+
+  const text = savedMcpTextForAgent(agent);
+  const dirty = isMcpDirty();
+
+  if (force) {
+    state.lastSavedMcpText = text;
+    mcpSet(text);
+    enabled.checked = agent.enabled !== false;
+    updateMcpChrome(agent, { dirty: false });
+    return;
+  }
+
+  // Soft refresh: never clobber in-progress edits; never rewrite lastSaved while dirty.
+  if (dirty || state.savingMcp) {
+    updateMcpChrome(agent, { dirty: true });
+    return;
+  }
+
+  state.lastSavedMcpText = text;
+  if (mcpGet() !== text) mcpSet(text);
   enabled.checked = agent.enabled !== false;
-  saveBtn.disabled = false;
-  resetBtn.disabled = false;
+  updateMcpChrome(agent, { dirty: false });
 }
 
-function renderConfigPanels() {
+function renderConfigPanels({ forceEditor = true } = {}) {
   renderDevicesList();
   renderAgentsList();
-  renderMcpEditor();
+  renderMcpEditor({ force: forceEditor });
 }
 
 async function selectDevice(deviceId) {
+  if (state.selectedDeviceId && state.selectedDeviceId !== deviceId && isMcpDirty()) {
+    if (!confirm("当前有未保存修改，切换设备将丢失。继续？")) return;
+  }
   state.selectedDeviceId = deviceId;
   state.selectedAgentId = null;
   renderDevicesList();
@@ -291,117 +424,106 @@ async function selectDevice(deviceId) {
     const agents = state.deviceDetail.agents || [];
     if (agents.length) state.selectedAgentId = agents[0].id;
     renderAgentsList();
-    renderMcpEditor();
+    renderMcpEditor({ force: true });
   } catch (err) {
     toast(err.message);
   }
 }
 
 function selectAgent(agentId) {
+  if (state.selectedAgentId && state.selectedAgentId !== agentId && isMcpDirty()) {
+    if (!confirm("当前 Agent 有未保存修改，切换将丢失。继续？")) return;
+  }
   state.selectedAgentId = agentId;
   renderAgentsList();
-  renderMcpEditor();
+  renderMcpEditor({ force: true });
 }
 
 async function saveMcpDocument() {
   const agentId = state.selectedAgentId;
-  if (!agentId || !state.selectedDeviceId) return;
+  const deviceId = state.selectedDeviceId;
+  if (!agentId || !deviceId || state.savingMcp) return;
+
   let doc;
   try {
-    doc = JSON.parse($("#mcp-editor").value);
+    doc = JSON.parse(mcpGet());
   } catch (err) {
     toast(`JSON 无效：${err.message}`);
     return;
   }
-  const mcpServers = doc.mcpServers ?? doc.mcp_servers ?? (doc && typeof doc === "object" ? doc : null);
+  const mcpServers = doc.mcpServers ?? doc.mcp_servers ?? null;
   if (!mcpServers || typeof mcpServers !== "object" || Array.isArray(mcpServers)) {
     toast('需要格式 {"mcpServers": { ... }}');
     return;
   }
+
+  const pretty = JSON.stringify({ mcpServers }, null, 2);
   const enabled = $("#agent-enabled").checked;
-  state.deviceDetail = await api(`/api/v1/devices/${encodeURIComponent(state.selectedDeviceId)}/agents`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      agent_config: {
-        [agentId]: {
-          enabled,
-          mcp_document: { mcpServers },
+
+  state.savingMcp = true;
+  $("#btn-mcp-save").disabled = true;
+  $("#btn-mcp-reset").disabled = true;
+  $("#btn-mcp-format").disabled = true;
+  // Freeze editor to the payload we are about to persist.
+  state.lastSavedMcpText = pretty;
+  mcpSet(pretty);
+
+  try {
+    const detail = await api(`/api/v1/devices/${encodeURIComponent(deviceId)}/agents`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        agent_config: {
+          [agentId]: {
+            enabled,
+            mcp_document: { mcpServers },
+          },
         },
-      },
-    }),
-  });
-  toast(`已保存 ${agentId}`);
-  renderAgentsList();
-  renderMcpEditor();
+      }),
+    });
+
+    state.savedGen += 1;
+    state.deviceDetail = detail;
+    // Re-assert local agent view from what we saved (ignore response key order).
+    const agent = (detail.agents || []).find((a) => a.id === agentId);
+    if (agent) {
+      agent.mcp_servers = mcpServers;
+      agent.mcp_document = { mcpServers };
+      agent.enabled = enabled;
+    }
+    state.lastSavedMcpText = pretty;
+    mcpSet(pretty);
+    renderAgentsList();
+    updateMcpChrome(agent || { id: agentId, mcp_servers: mcpServers }, { dirty: false });
+    toast(`已保存 ${agentId}`);
+  } catch (err) {
+    toast(err.message);
+    throw err;
+  } finally {
+    state.savingMcp = false;
+    $("#btn-mcp-save").disabled = false;
+    $("#btn-mcp-reset").disabled = false;
+    $("#btn-mcp-format").disabled = false;
+  }
 }
 
-async function resetMcpDocument() {
+function restoreLastSavedMcp() {
   const agentId = state.selectedAgentId;
-  if (!agentId || !state.selectedDeviceId) return;
-  if (!confirm(`清除 ${agentId} 的固定 mcp.json，恢复为 Profile 默认？`)) return;
-  state.deviceDetail = await api(`/api/v1/devices/${encodeURIComponent(state.selectedDeviceId)}/agents`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      agent_config: {
-        [agentId]: {
-          enabled: $("#agent-enabled").checked,
-          mcp_servers: null,
-          servers: {},
-        },
-      },
-    }),
-  });
-  toast(`已重置 ${agentId}`);
-  renderAgentsList();
-  renderMcpEditor();
-}
-
-function renderSkills() {
-  $("#skills-table").innerHTML = `
-    <table>
-      <thead><tr><th>标识</th><th>版本</th><th>路径</th><th>目标 Agent</th><th>Profiles</th></tr></thead>
-      <tbody>
-        ${state.skills
-          .map(
-            (s) => `<tr>
-          <td class="mono">${esc(s.id)}</td>
-          <td>${esc(s.version)}</td>
-          <td class="mono">${esc(s.path)}</td>
-          <td class="mono">${esc(Object.keys(s.targets || {}).join(", "))}</td>
-          <td>${(s.profiles || []).map((p) => `<span class="badge">${esc(p)}</span>`).join(" ")}</td>
-        </tr>`
-          )
-          .join("")}
-      </tbody>
-    </table>`;
-}
-
-function renderPushDeliveries() {
-  const el = $("#push-table");
-  if (!el) return;
-  if (!state.pushDeliveries.length) {
-    el.innerHTML = `<p class="muted pad">暂无推送记录</p>`;
+  if (!agentId) return;
+  if (!state.lastSavedMcpText) {
+    toast("没有可恢复的已保存内容");
     return;
   }
-  el.innerHTML = `
-    <table>
-      <thead><tr><th>时间</th><th>设备</th><th>状态</th><th>触发</th><th>Release</th><th>Agent</th><th>错误</th></tr></thead>
-      <tbody>
-        ${state.pushDeliveries
-          .map(
-            (p) => `<tr>
-          <td>${fmtTime(p.created_at)}</td>
-          <td class="mono">${esc(p.device_id)}</td>
-          <td><span class="badge push-badge push-${esc(p.status)}">${esc(p.status)}</span></td>
-          <td>${esc(p.trigger)}</td>
-          <td class="mono">${esc(p.release_id)}</td>
-          <td>${(p.targets || []).map((t) => `<span class="badge">${esc(t)}</span>`).join(" ")}</td>
-          <td class="muted">${esc(p.error || "")}</td>
-        </tr>`
-          )
-          .join("")}
-      </tbody>
-    </table>`;
+  if (mcpGet() === state.lastSavedMcpText) {
+    toast("已是上次保存内容");
+    return;
+  }
+  mcpSet(state.lastSavedMcpText);
+  toast(`已恢复 ${agentId} 上次保存`);
+}
+
+function formatMcpDocument() {
+  if (McpJsonEditor.format()) toast("已格式化");
+  else toast("JSON 无效，无法格式化");
 }
 
 function renderAudit() {
@@ -423,40 +545,67 @@ function renderAudit() {
 }
 
 async function refresh() {
-  const [health, servers, bindings, devices, skills, audit, pushDeliveries] = await Promise.all([
-    api("/health"),
-    api("/api/v1/logical-servers"),
-    api("/api/v1/bindings"),
-    api("/api/v1/devices"),
-    api("/api/v1/skill-packs"),
-    api("/api/v1/audit?limit=40"),
-    api("/api/v1/push-deliveries?limit=80"),
-  ]);
-  state.servers = servers;
-  state.bindings = bindings;
+  // Never touch the editor while saving or when there are unsaved edits.
+  const skipEditor = state.savingMcp || isMcpDirty();
+  const epoch = ++state.dataEpoch;
+  const genAtStart = state.savedGen;
+
+  if (!(await ensureSession())) return;
+
+  let health, devices, audit;
+  try {
+    [health, devices, audit] = await Promise.all([
+      api("/health"),
+      api("/api/v1/devices"),
+      api("/api/v1/audit?limit=40"),
+    ]);
+  } catch (err) {
+    if (err.adminAuth) {
+      clearSessionToken();
+      showLogin("登录已失效，请重新登录");
+      return;
+    }
+    throw err;
+  }
+  if (epoch !== state.dataEpoch) return;
+
   state.devices = devices;
-  state.skills = skills;
   state.audit = audit;
-  state.pushDeliveries = pushDeliveries;
   const healthLine = $("#health-line");
   if (healthLine) healthLine.textContent = `接口 ${health.status} · ${fmtTime(health.time)}`;
-  renderOverview();
-  renderServers();
-  renderDevicesTable();
-  renderSkills();
-  renderAudit();
-  renderPushDeliveries();
-  if (state.selectedDeviceId) {
-    const keepAgent = state.selectedAgentId;
-    state.deviceDetail = await api(`/api/v1/devices/${encodeURIComponent(state.selectedDeviceId)}`);
-    const agents = state.deviceDetail.agents || [];
-    if (keepAgent && agents.some((a) => a.id === keepAgent)) {
-      state.selectedAgentId = keepAgent;
-    } else {
-      state.selectedAgentId = agents[0]?.id || null;
+
+  if (state.selectedDeviceId && !skipEditor) {
+    try {
+      const keepAgent = state.selectedAgentId;
+      const detail = await api(`/api/v1/devices/${encodeURIComponent(state.selectedDeviceId)}`);
+      if (epoch !== state.dataEpoch) return;
+      // A save completed while we were fetching — keep the post-save view.
+      if (state.savingMcp || isMcpDirty() || genAtStart !== state.savedGen) {
+        renderDevicesList();
+        return;
+      }
+      state.deviceDetail = detail;
+      const agents = state.deviceDetail.agents || [];
+      if (keepAgent && agents.some((a) => a.id === keepAgent)) {
+        state.selectedAgentId = keepAgent;
+      } else {
+        state.selectedAgentId = agents[0]?.id || null;
+      }
+    } catch (err) {
+      console.warn(err);
+      state.selectedDeviceId = null;
+      state.deviceDetail = null;
     }
   }
-  renderConfigPanels();
+
+  if (epoch !== state.dataEpoch) return;
+  renderConfigPanels({ forceEditor: false });
+  try {
+    renderOverview();
+    renderAudit();
+  } catch (err) {
+    console.warn(err);
+  }
 }
 
 async function runScript(dryRun) {
@@ -585,12 +734,35 @@ function initResizableColumns() {
 }
 
 function wire() {
+  // Login first — must work even if the editor fails to mount.
+  $("#login-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const user = $("#login-user")?.value?.trim() || "";
+    const pass = $("#login-pass")?.value || "";
+    const btn = e.target.querySelector("button[type=submit]");
+    if (btn) btn.disabled = true;
+    try {
+      await login(user, pass);
+      showApp();
+      toast("登录成功");
+      await refresh();
+    } catch (err) {
+      showLogin(err.message || "登录失败");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
   initResizableColumns();
 
   const saved = localStorage.getItem("relay-theme");
   applyTheme(saved === "night" ? "night" : "day");
-  $("#btn-theme").addEventListener("click", () => {
+  $("#btn-theme")?.addEventListener("click", () => {
     applyTheme(document.body.dataset.theme === "night" ? "day" : "night");
+  });
+  $("#btn-admin-logout")?.addEventListener("click", () => {
+    logout().then(() => toast("已退出"));
   });
 
   $$(".nav button[data-view]").forEach((b) =>
@@ -599,48 +771,13 @@ function wire() {
 
   const refreshToast = () => refresh().then(() => toast("已刷新"));
   $("#btn-refresh")?.addEventListener("click", refreshToast);
-  $("#btn-refresh-devices")?.addEventListener("click", refreshToast);
   $("#btn-refresh-config")?.addEventListener("click", refreshToast);
-  $("#btn-refresh-push")?.addEventListener("click", refreshToast);
-  setInterval(() => {
-    if (["config", "devices", "push", "overview"].includes(state.view)) {
-      refresh().catch(() => {});
-    }
-  }, 10000);
+  // No auto-refresh: stale GETs were racing first saves and clearing the editor.
 
   $("#btn-release")?.addEventListener("click", async () => {
     const r = await api("/api/v1/releases?changelog=ui", { method: "POST" });
     toast(`已发布 ${r.id}`);
     await refresh();
-  });
-
-  $("#server-form")?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    const body = {
-      id: fd.get("id").trim(),
-      display_name: fd.get("display_name").trim() || null,
-      transport: fd.get("transport"),
-      default: JSON.parse(fd.get("default_json")),
-      tags: String(fd.get("tags") || "")
-        .split(",")
-        .map((x) => x.trim())
-        .filter(Boolean),
-    };
-    await api("/api/v1/logical-servers", { method: "POST", body: JSON.stringify(body) });
-    toast(`已保存 ${body.id}`);
-    e.target.reset();
-    await refresh();
-  });
-
-  $("#btn-preview")?.addEventListener("click", async () => {
-    const profile = $("#preview-profile").value;
-    const target = $("#preview-target").value;
-    const data = await api(
-      `/api/v1/preview?profile=${encodeURIComponent(profile)}&target=${encodeURIComponent(target)}`
-    );
-    $("#preview-meta").textContent = `${profile} × ${target} · ${Object.keys(data.servers || {}).length} 个服务`;
-    $("#preview-out").textContent = JSON.stringify(data, null, 2);
   });
 
   $("#btn-script-parse")?.addEventListener("click", async () => {
@@ -676,7 +813,8 @@ function wire() {
   });
 
   $("#btn-mcp-save")?.addEventListener("click", () => saveMcpDocument().catch((e) => toast(e.message)));
-  $("#btn-mcp-reset")?.addEventListener("click", () => resetMcpDocument().catch((e) => toast(e.message)));
+  $("#btn-mcp-reset")?.addEventListener("click", () => restoreLastSavedMcp());
+  $("#btn-mcp-format")?.addEventListener("click", () => formatMcpDocument());
 
   document.addEventListener("click", async (e) => {
     const selDev = e.target.closest("[data-select-device]");
@@ -690,34 +828,44 @@ function wire() {
       await selectDevice(openCfg.dataset.openConfig);
       return;
     }
+    const delDev = e.target.closest("[data-del-device]");
+    if (delDev) {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = delDev.dataset.delDevice;
+      if (
+        !confirm(
+          `删除设备 ${id}？\n\n将立刻作废其 token 并断开连接。该机器需重新执行：\nmcp-relay init --url <服务端URL>\nmcp-relay sync`
+        )
+      ) {
+        return;
+      }
+      await api(`/api/v1/devices/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (state.selectedDeviceId === id) {
+        state.selectedDeviceId = null;
+        state.selectedAgentId = null;
+        state.deviceDetail = null;
+      }
+      toast(`已删除 ${id}`);
+      await refresh();
+      renderConfigPanels();
+      return;
+    }
     const selAgent = e.target.closest("[data-select-agent]");
     if (selAgent) {
       selectAgent(selAgent.dataset.selectAgent);
       return;
     }
-    const editS = e.target.closest("[data-edit-server]");
-    if (editS) {
-      const s = state.servers.find((x) => x.id === editS.dataset.editServer);
-      if (!s) return;
-      const f = $("#server-form");
-      f.id.value = s.id;
-      f.display_name.value = s.display_name || "";
-      f.transport.value = s.transport;
-      f.default_json.value = JSON.stringify(s.default || {}, null, 2);
-      f.tags.value = (s.tags || []).join(",");
-      setView("servers");
-    }
-    const delS = e.target.closest("[data-del-server]");
-    if (delS) {
-      if (!confirm(`删除 MCP 服务 ${delS.dataset.delServer}？`)) return;
-      await api(`/api/v1/logical-servers/${encodeURIComponent(delS.dataset.delServer)}`, { method: "DELETE" });
-      toast("已删除");
-      await refresh();
-    }
   });
 }
 
 wire();
+try {
+  const editorEl = $("#mcp-editor");
+  if (editorEl) McpJsonEditor.mount(editorEl);
+} catch (err) {
+  console.error("mcp editor mount failed", err);
+}
 refresh().catch((err) => {
   const healthLine = $("#health-line");
   if (healthLine) healthLine.textContent = `加载失败：${err.message}`;
