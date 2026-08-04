@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Deploy MCP Relay to NEC (default LAN 127.0.0.1)
+# Deploy MCP Relay to a remote host over SSH.
+# Required env: DEPLOY_HOST, DEPLOY_USER
+# Optional: DEPLOY_DEST (default ~/mcp-relay)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-NEC_HOST="${NEC_HOST:-127.0.0.1}"
-NEC_USER="${NEC_USER:-zuens2020}"
-REMOTE="${NEC_USER}@${NEC_HOST}"
-DEST="${NEC_DEST:-~/mcp-relay}"
+
+DEPLOY_HOST="${DEPLOY_HOST:?set DEPLOY_HOST}"
+DEPLOY_USER="${DEPLOY_USER:?set DEPLOY_USER}"
+DEST="${DEPLOY_DEST:-~/mcp-relay}"
+REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
 
 echo "==> Deploy MCP Relay -> ${REMOTE}:${DEST}"
 ssh -o BatchMode=yes -o ConnectTimeout=15 "$REMOTE" "mkdir -p ${DEST}/data"
 
 ZIP="$(mktemp /tmp/mcp-relay-XXXXXX.zip 2>/dev/null || echo /tmp/mcp-relay-deploy.zip)"
-# Prefer `python` on Windows hosts where the Store `python3` stub fails.
 PY=python3
 command -v python3 >/dev/null 2>&1 || PY=python
 $PY - <<PY
@@ -37,5 +39,4 @@ rm -f "$ZIP"
 ssh -o BatchMode=yes "$REMOTE" "cd ${DEST} && python3 -c 'import zipfile; zipfile.ZipFile(\"deploy.zip\").extractall(\".\")' && docker compose build && docker compose up -d && curl -sf http://127.0.0.1:8740/health && echo"
 
 echo "==> Done"
-echo "    Local on NEC: http://127.0.0.1:8740"
-echo "    Tunnel:       https://example.com (see docs/cloudflare-tunnel.md)"
+echo "    Health: http://127.0.0.1:8740/health (on the remote host)"

@@ -6,7 +6,7 @@
   "id": "trek",
   "transport": "http",
   "default": {
-    "url": "https://example.com/mcp",
+    "url": "https://example.com/trek/mcp",
     "type": "streamableHttp",
     "headers": {
       "Authorization": "Bearer ${TREK_MCP_TOKEN}"

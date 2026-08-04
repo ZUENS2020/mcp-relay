@@ -6,7 +6,7 @@
   "id": "nowledge-mem",
   "transport": "http",
   "default": {
-    "url": "https://example.com/mcp",
+    "url": "https://example.com/mem/mcp",
     "type": "streamableHttp",
     "headers": {
       "Authorization": "Bearer ${NMEM_TOKEN}"

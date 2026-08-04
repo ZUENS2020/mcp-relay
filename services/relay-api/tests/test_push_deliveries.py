@@ -33,7 +33,7 @@ def test_patch_creates_push_delivery(tmp_path, monkeypatch):
     client, _main = _client(tmp_path, monkeypatch)
     reg = client.post(
         "/api/v1/devices/register",
-        json={"device_id": "push-test-1", "profile": "nec-server", "targets": ["cursor"]},
+        json={"device_id": "push-test-1", "profile": "linux-server", "targets": ["cursor"]},
     )
     assert reg.status_code == 200
     device_id = reg.json()["device_id"]
@@ -67,7 +67,7 @@ def test_ws_ack_marks_delivery(tmp_path, monkeypatch):
     client, _main = _client(tmp_path, monkeypatch)
     reg = client.post(
         "/api/v1/devices/register",
-        json={"device_id": "push-test-2", "profile": "nec-server", "targets": ["cursor"]},
+        json={"device_id": "push-test-2", "profile": "linux-server", "targets": ["cursor"]},
     )
     token = reg.json()["device_token"]
     device_id = reg.json()["device_id"]

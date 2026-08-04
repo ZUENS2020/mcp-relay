@@ -1,7 +1,6 @@
 package detect
 
 import (
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,45 +27,14 @@ func Profile(home string) string {
 	if forced := os.Getenv("RELAY_PROFILE"); forced != "" {
 		return forced
 	}
-	host, _ := os.Hostname()
-	host = strings.ToLower(host)
-	if host == "nec" || strings.Contains(host, "nec") {
-		return "nec-server"
-	}
-	if hasLocalIP("127.0.0.1") {
-		return "nec-server"
-	}
 	switch runtime.GOOS {
 	case "windows":
 		return "windows-desktop"
 	case "darwin":
 		return "mac-laptop"
 	default:
-		return "nec-server"
+		return "linux-server"
 	}
-}
-
-func hasLocalIP(want string) bool {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return false
-	}
-	for _, iface := range ifaces {
-		addrs, _ := iface.Addrs()
-		for _, a := range addrs {
-			var ip net.IP
-			switch v := a.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip != nil && ip.String() == want {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func inPATH(name string) bool {

@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 TARGETS = ("cursor", "hermes", "pi", "codex", "claude-code")
-PROFILES = ("windows-desktop", "mac-laptop", "nec-server")
+PROFILES = ("windows-desktop", "mac-laptop", "linux-server")
 
 DATA_DIR = Path(os.environ.get("RELAY_DATA", "/data")).resolve()
 DB_PATH = DATA_DIR / "relay.db"
@@ -1273,7 +1273,7 @@ ops:
         enabled: true
         enable: [trek]
   - match:
-      profile: nec-server
+      profile: linux-server
     agents:
       hermes:
         enable_all: true
@@ -1281,7 +1281,7 @@ ops:
         "dsl": """# batch enable MCP servers on all windows-desktop devices
 enable profile:windows-desktop agent:cursor trek nowledge-mem drawio
 disable profile:windows-desktop agent:cursor jeb
-enable_all profile:nec-server agent:hermes
+enable_all profile:linux-server agent:hermes
 set profile:windows-desktop agents=cursor,pi,codex,claude-code
 """,
     }

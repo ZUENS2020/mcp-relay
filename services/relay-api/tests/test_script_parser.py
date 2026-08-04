@@ -21,7 +21,7 @@ def test_parse_yaml_and_apply():
 version: 1
 ops:
   - match:
-      profile: nec-server
+      profile: linux-server
     agents:
       hermes:
         enable_all: true
@@ -30,7 +30,7 @@ ops:
 """
     script, errs = parse_script(text, "yaml")
     assert not errs
-    device = {"device_id": "d1", "profile": "nec-server", "hostname": "nec", "targets": ["hermes", "cursor"]}
+    device = {"device_id": "d1", "profile": "linux-server", "hostname": "srv", "targets": ["hermes", "cursor"]}
     known = ["trek", "jeb", "nowledge-mem"]
     cfg, targets, changed = apply_script_to_device_config(device, {}, script, known)
     assert changed

@@ -125,6 +125,6 @@ jobs:
             echo "Install:"
             echo "\`\`\`bash"
             echo "npm i -g @zuens2020/mcp-relay@$VER"
-            echo "mcp-relay init --url https://example.com"
+            echo "mcp-relay init --url http://127.0.0.1:8740"
             echo "\`\`\`"
           } >> "$GITHUB_STEP_SUMMARY"

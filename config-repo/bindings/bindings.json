@@ -30,14 +30,14 @@
   {
     "logical_id": "trek",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "hermes",
     "enabled": true
   },
   {
     "logical_id": "trek",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "cursor",
     "enabled": true
   },
@@ -79,14 +79,14 @@
   {
     "logical_id": "nowledge-mem",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "hermes",
     "enabled": true
   },
   {
     "logical_id": "nowledge-mem",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "cursor",
     "enabled": true
   },
@@ -133,14 +133,14 @@
   {
     "logical_id": "drawio",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "hermes",
     "enabled": true
   },
   {
     "logical_id": "drawio",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "cursor",
     "enabled": true
   },
@@ -182,14 +182,14 @@
   {
     "logical_id": "trvl",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "hermes",
     "enabled": true
   },
   {
     "logical_id": "trvl",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "cursor",
     "enabled": true
   },
@@ -231,14 +231,14 @@
   {
     "logical_id": "google-maps",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "hermes",
     "enabled": true
   },
   {
     "logical_id": "google-maps",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "cursor",
     "enabled": true
   },
@@ -280,14 +280,14 @@
   {
     "logical_id": "cloudflare",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "hermes",
     "enabled": true
   },
   {
     "logical_id": "cloudflare",
     "overrides": {},
-    "profile": "nec-server",
+    "profile": "linux-server",
     "target": "cursor",
     "enabled": true
   },

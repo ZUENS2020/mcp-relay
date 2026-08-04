@@ -16,7 +16,7 @@ ops:
         enabled: true
         enable: [trek]
   - match:
-      device_id: nec-server-07538527cbf9
+      device_id: linux-server-example
     agents:
       hermes:
         enable_all: true
@@ -26,9 +26,9 @@ Line DSL example
 # comments allowed
 enable profile:windows-desktop agent:cursor trek nowledge-mem drawio
 disable profile:windows-desktop agent:cursor jeb
-enable device:nec-server-xxx agent:hermes trek
-set device:nec-server-xxx agents=cursor,hermes
-enable_all profile:nec-server agent:hermes
+enable device:example-device agent:hermes trek
+set device:example-device agents=cursor,hermes
+enable_all profile:linux-server agent:hermes
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from typing import Any
 import yaml
 
 TARGETS = ("cursor", "hermes", "pi", "codex", "claude-code")
-PROFILES = ("windows-desktop", "mac-laptop", "nec-server")
+PROFILES = ("windows-desktop", "mac-laptop", "linux-server")
 
 
 @dataclass

@@ -10,6 +10,6 @@
       "codex": { "install_path": ".codex/skills/relay-hello" },
       "claude-code": { "install_path": ".claude/skills/relay-hello" }
     },
-    "profiles": ["windows-desktop", "mac-laptop", "nec-server"]
+    "profiles": ["windows-desktop", "mac-laptop", "linux-server"]
   }
 ]
