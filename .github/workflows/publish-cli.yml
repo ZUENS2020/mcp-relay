@@ -4,43 +4,107 @@ on:
   push:
     tags:
       - "cli-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver without v prefix (e.g. 0.2.0). Empty = derive from tag."
+        required: false
+        default: ""
 
 permissions:
   contents: read
+  id-token: write
+
+concurrency:
+  group: publish-cli-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
           go-version: "1.22.x"
+          cache-dependency-path: agent/go.sum
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           registry-url: "https://registry.npmjs.org"
+          # disable cache — publish jobs must see freshly built binaries
+          cache: ""
 
-      - name: Derive version from tag
+      - name: Ensure modern npm (OIDC / trusted publishing)
+        run: npm install -g npm@latest
+
+      - name: Resolve version
         id: ver
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          VER="${TAG#cli-v}"
+          set -euo pipefail
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VER="${{ github.event.inputs.version }}"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == cli-v* ]]; then
+            VER="${GITHUB_REF_NAME#cli-v}"
+          else
+            echo "No version: push tag cli-vX.Y.Z or pass workflow_dispatch version" >&2
+            exit 1
+          fi
+          if ! [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+            echo "Invalid semver: $VER" >&2
+            exit 1
+          fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Publishing CLI version $VER"
 
-      - name: Build binaries
+      - name: Cross-compile agent binaries
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: bash scripts/build-agent-binaries.sh
+
+      - name: Verify binaries
+        run: |
+          set -euo pipefail
+          check() {
+            local f="$1"
+            test -f "$f" || { echo "missing $f"; exit 1; }
+            local sz
+            sz=$(wc -c < "$f")
+            echo "$f ($sz bytes)"
+            test "$sz" -gt 1000000 || { echo "binary too small: $f"; exit 1; }
+          }
+          check packages/mcp-relay-win32-x64/bin/relay-agent.exe
+          check packages/mcp-relay-darwin-x64/bin/relay-agent
+          check packages/mcp-relay-darwin-arm64/bin/relay-agent
+          check packages/mcp-relay-linux-x64/bin/relay-agent
+          chmod +x packages/mcp-relay-darwin-*/bin/relay-agent packages/mcp-relay-linux-x64/bin/relay-agent
+          # smoke linux binary
+          packages/mcp-relay-linux-x64/bin/relay-agent version
 
       - name: Publish platform packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for d in packages/mcp-relay-win32-x64 packages/mcp-relay-darwin-x64 packages/mcp-relay-darwin-arm64 packages/mcp-relay-linux-x64; do
-            echo "publishing $d"
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is empty."
+            echo "For first publish create a granular token and: gh secret set NPM_TOKEN"
+            echo "Afterwards you can configure npm Trusted Publishing for this workflow."
+            exit 1
+          fi
+          for d in \
+            packages/mcp-relay-win32-x64 \
+            packages/mcp-relay-darwin-x64 \
+            packages/mcp-relay-darwin-arm64 \
+            packages/mcp-relay-linux-x64
+          do
+            echo "==> publishing $d"
             (cd "$d" && npm publish --access public)
           done
 
@@ -48,5 +112,19 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          set -euo pipefail
           cd packages/mcp-relay
           npm publish --access public
+
+      - name: Summary
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          {
+            echo "### Published @zuens2020/mcp-relay@$VER"
+            echo ""
+            echo "Install:"
+            echo "\`\`\`bash"
+            echo "npm i -g @zuens2020/mcp-relay@$VER"
+            echo "mcp-relay init --url https://example.com"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
