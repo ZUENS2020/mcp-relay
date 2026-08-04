@@ -2,7 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { PACKAGE_MAP, platformKey } = require("./bin");
+const { PACKAGE_MAP, platformKey } = require("../lib/bin");
 
 /** Ensure platform binary is executable after npm install (Windows tarballs drop +x). */
 function main() {
