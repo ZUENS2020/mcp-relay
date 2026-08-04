@@ -566,6 +566,8 @@ code{background:#243044;padding:0.1rem 0.35rem;border-radius:4px}
 <div class="card"><h3>Logical servers</h3><pre id="l">loading…</pre></div>
 <div class="card"><h3>Bindings</h3><pre id="b">loading…</pre></div>
 <div class="card"><h3>Devices</h3><pre id="d">loading…</pre></div>
+<div class="card"><h3>Skill packs</h3><pre id="s">loading…</pre></div>
+<div class="card"><h3>Audit</h3><pre id="a">loading…</pre></div>
 <script>
 async function j(u){const r=await fetch(u);return r.json()}
 (async()=>{
@@ -573,6 +575,8 @@ async function j(u){const r=await fetch(u);return r.json()}
   l.textContent=JSON.stringify(await j('/api/v1/logical-servers'),null,2);
   b.textContent=JSON.stringify(await j('/api/v1/bindings'),null,2);
   d.textContent=JSON.stringify(await j('/api/v1/devices'),null,2);
+  s.textContent=JSON.stringify(await j('/api/v1/skill-packs'),null,2);
+  a.textContent=JSON.stringify(await j('/api/v1/audit'),null,2);
 })()
 </script>
 </body></html>"""
