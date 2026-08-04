@@ -101,6 +101,14 @@ mcp-relay version
 
 建议日常跑 `mcp-relay watch` 或 `connect`，管理台才会显示在线，且保存后能即时推送。
 
+**后台运行**（关掉终端后仍保持在线）：
+
+```bash
+mcp-relay watch --daemon     # 或 connect --daemon；日志 ~/.mcp-relay/logs/watch.log
+mcp-relay daemon status      # 查看状态（默认 watch，可指定 connect）
+mcp-relay daemon stop        # 停止后台进程
+```
+
 设备若在管理台被删除，本地注册会失效，需重新 `mcp-relay init --url …`。
 
 ### 客户端环境变量

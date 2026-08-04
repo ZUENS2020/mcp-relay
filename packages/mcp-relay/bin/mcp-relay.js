@@ -29,6 +29,9 @@ function help() {
   mcp-relay config path
   mcp-relay update [--check] [--force]
   mcp-relay doctor|detect|register|sync|connect|watch|backup|version [...]
+  mcp-relay watch --daemon       # 后台运行（日志 ~/.mcp-relay/logs/watch.log）
+  mcp-relay daemon status [name] # 查看后台进程状态（默认 watch）
+  mcp-relay daemon stop [name]   # 停止后台进程
 
 默认同步（live）：先备份本地 MCP → 服务端为空则上传 → 再下发配置。
 connect/watch 默认每 6h 检查 npm 新版本并自动升级（可用 config set auto_update false 关闭）。
@@ -48,6 +51,17 @@ function parseFlag(args, name) {
 
 function hasFlag(args, name) {
   return args.includes(name);
+}
+
+/**
+ * Resolve the log file for daemon mode under ~/.mcp-relay/logs/<cmd>.log
+ * (also used by the agent itself on watch/connect).
+ */
+function daemonLogPath(cmd) {
+  const fs = require("fs");
+  const logsDir = path.join(require("os").homedir(), ".mcp-relay", "logs");
+  fs.mkdirSync(logsDir, { recursive: true });
+  return path.join(logsDir, `${cmd}.log`);
 }
 
 async function main() {
@@ -104,6 +118,11 @@ async function main() {
       console.error(e.message || e);
       process.exit(1);
     }
+    return;
+  }
+
+  if (cmd === "daemon") {
+    runDaemonControl(argv[1], argv[2]);
     return;
   }
 
@@ -182,6 +201,11 @@ async function main() {
 
   // Long-running: keep Node parent for npm auto-update + child agent.
   if (cmd === "watch" || cmd === "connect") {
+    // Daemon mode: detach the agent so it keeps running after the shell closes.
+    if (hasFlag(argv, "--daemon") || hasFlag(argv, "-d")) {
+      runDaemon(argv, cfg);
+      return;
+    }
     let child = null;
     const stopUpdater = startBackgroundUpdater({
       cfg,
@@ -221,6 +245,90 @@ function buildPassArgs(args, cfg) {
     pass.push("--relay-url", cfg.relay_url);
   }
   return pass;
+}
+
+function runDaemonControl(sub, name) {
+  const fs = require("fs");
+  const os = require("os");
+  const { spawnSync } = require("child_process");
+  const pidFile = (n) => path.join(os.homedir(), ".mcp-relay", `${n || "watch"}.pid`);
+  if (sub === "stop") {
+    const target = name || "watch";
+    const pf = pidFile(target);
+    if (!fs.existsSync(pf)) {
+      console.error(`[mcp-relay] 没有找到 ${target} 的 PID 文件 (${pf})`);
+      process.exit(1);
+    }
+    const pid = parseInt(fs.readFileSync(pf, "utf8"), 10);
+    if (process.platform === "win32") {
+      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "inherit" });
+    } else {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch (e) {
+        console.error(`[mcp-relay] 停止失败: ${e.message}`);
+      }
+    }
+    fs.unlinkSync(pf);
+    console.log(`[mcp-relay] 已停止 ${target} (pid=${pid})`);
+    return;
+  }
+  if (sub === "status") {
+    const target = name || "watch";
+    const pf = pidFile(target);
+    if (!fs.existsSync(pf)) {
+      console.log(`[mcp-relay] ${target}: 未运行`);
+      return;
+    }
+    const pid = parseInt(fs.readFileSync(pf, "utf8"), 10);
+    const alive =
+      process.platform === "win32"
+        ? spawnSync("tasklist", ["/FI", `PID eq ${pid}`], { encoding: "utf8" }).stdout.includes(String(pid))
+        : (() => {
+            try {
+              process.kill(pid, 0);
+              return true;
+            } catch {
+              return false;
+            }
+          })();
+    console.log(`[mcp-relay] ${target}: pid=${pid} ${alive ? "运行中" : "已退出"}`);
+    console.log(`[mcp-relay] 日志: ${daemonLogPath(target)}`);
+    return;
+  }
+  console.error("用法: mcp-relay daemon stop|status [watch|connect]");
+  process.exit(2);
+}
+
+function runDaemon(args, cfg) {
+  const fs = require("fs");
+  let bin;
+  try {
+    bin = resolveBinary();
+  } catch (e) {
+    console.error(e.message);
+    process.exit(1);
+  }
+  // Strip --daemon/-d so the child doesn't re-detach (it is the daemon).
+  const childArgs = buildPassArgs(args, cfg).filter(
+    (a) => a !== "--daemon" && a !== "-d"
+  );
+  const logFile = daemonLogPath(args[0]);
+  const out = fs.openSync(logFile, "a");
+  const child = spawn(bin, childArgs, {
+    detached: true,
+    stdio: ["ignore", out, out],
+    env: { ...process.env },
+    windowsHide: true,
+  });
+  child.unref();
+  fs.closeSync(out);
+  // Write PID so `mcp-relay daemon stop` can find it later.
+  const pidFile = path.join(require("os").homedir(), ".mcp-relay", `${args[0]}.pid`);
+  fs.writeFileSync(pidFile, String(child.pid), { mode: 0o600 });
+  console.log(`[mcp-relay] ${args[0]} 已在后台启动 (pid=${child.pid})`);
+  console.log(`[mcp-relay] 日志: ${logFile}`);
+  console.log(`[mcp-relay] 停止: mcp-relay daemon stop ${args[0]}`);
 }
 
 function runBinary(args, cfg) {
