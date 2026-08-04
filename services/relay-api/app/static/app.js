@@ -67,7 +67,7 @@ function renderOverview() {
 
   $("#overview-devices").innerHTML = rows
     ? `<table><thead><tr><th>Device</th><th>Profile</th><th>Targets</th><th>Last sync</th></tr></thead><tbody>${rows}</tbody></table>`
-    : `<p class="muted" style="padding:1rem">尚无设备注册</p>`;
+    : `<p class="muted" style="padding:1rem">No devices registered</p>`;
 }
 
 function renderServers() {
@@ -85,8 +85,8 @@ function renderServers() {
           <td><span class="badge">${esc(s.transport)}</span></td>
           <td class="mono">${esc(JSON.stringify(s.default))}</td>
           <td>${(s.tags || []).map((t) => `<span class="badge">${esc(t)}</span>`).join(" ")}</td>
-          <td><button class="btn" data-edit-server="${esc(s.id)}" type="button">编辑</button>
-              <button class="btn btn-danger" data-del-server="${esc(s.id)}" type="button">删除</button></td>
+          <td><button class="btn" data-edit-server="${esc(s.id)}" type="button">Edit</button>
+              <button class="btn btn-danger" data-del-server="${esc(s.id)}" type="button">Delete</button></td>
         </tr>`
           )
           .join("")}
@@ -113,8 +113,8 @@ function renderBindings() {
           <td><span class="badge ${b.enabled ? "ok" : "off"}">${b.enabled ? "on" : "off"}</span></td>
           <td class="mono">${esc(JSON.stringify(b.overrides || {}))}</td>
           <td>
-            <button class="btn" data-edit-binding="${b.id}" type="button">编辑</button>
-            <button class="btn btn-danger" data-del-binding="${b.id}" type="button">删除</button>
+            <button class="btn" data-edit-binding="${b.id}" type="button">Edit</button>
+            <button class="btn btn-danger" data-del-binding="${b.id}" type="button">Delete</button>
           </td>
         </tr>`
           )
@@ -215,13 +215,26 @@ async function refresh() {
 }
 
 function wire() {
-  $$(".nav button").forEach((b) =>
+  const themeBtn = $("#btn-theme");
+  const saved = localStorage.getItem("relay-theme");
+  if (saved === "night" || saved === "day") {
+    document.body.dataset.theme = saved;
+    themeBtn.textContent = `Theme: ${saved === "night" ? "Night" : "Day"}`;
+  }
+  themeBtn.addEventListener("click", () => {
+    const next = document.body.dataset.theme === "night" ? "day" : "night";
+    document.body.dataset.theme = next;
+    localStorage.setItem("relay-theme", next);
+    themeBtn.textContent = `Theme: ${next === "night" ? "Night" : "Day"}`;
+  });
+
+  $$(".nav button[data-view]").forEach((b) =>
     b.addEventListener("click", () => setView(b.dataset.view))
   );
-  $("#btn-refresh").addEventListener("click", () => refresh().then(() => toast("已刷新")));
+  $("#btn-refresh").addEventListener("click", () => refresh().then(() => toast("Refreshed")));
   $("#btn-release").addEventListener("click", async () => {
     const r = await api("/api/v1/releases?changelog=ui", { method: "POST" });
-    toast(`已发布 ${r.id}`);
+    toast(`Published ${r.id}`);
     await refresh();
   });
   $("#filter-profile").addEventListener("change", renderBindings);
@@ -241,7 +254,7 @@ function wire() {
         .filter(Boolean),
     };
     await api("/api/v1/logical-servers", { method: "POST", body: JSON.stringify(body) });
-    toast(`已保存 ${body.id}`);
+    toast(`Saved ${body.id}`);
     e.target.reset();
     await refresh();
   });
@@ -257,7 +270,7 @@ function wire() {
       overrides: JSON.parse(fd.get("overrides_json") || "{}"),
     };
     await api("/api/v1/bindings", { method: "POST", body: JSON.stringify(body) });
-    toast("绑定已保存");
+    toast("Binding saved");
     await refresh();
   });
 
@@ -284,9 +297,9 @@ function wire() {
     }
     const delS = e.target.closest("[data-del-server]");
     if (delS) {
-      if (!confirm(`删除逻辑 MCP ${delS.dataset.delServer}?`)) return;
+      if (!confirm(`Delete logical MCP ${delS.dataset.delServer}?`)) return;
       await api(`/api/v1/logical-servers/${encodeURIComponent(delS.dataset.delServer)}`, { method: "DELETE" });
-      toast("已删除");
+      toast("Deleted");
       await refresh();
     }
     const editB = e.target.closest("[data-edit-binding]");
@@ -303,9 +316,9 @@ function wire() {
     }
     const delB = e.target.closest("[data-del-binding]");
     if (delB) {
-      if (!confirm("删除该绑定?")) return;
+      if (!confirm("Delete this binding?")) return;
       await api(`/api/v1/bindings/${encodeURIComponent(delB.dataset.delBinding)}`, { method: "DELETE" });
-      toast("已删除绑定");
+      toast("Binding deleted");
       await refresh();
     }
   });

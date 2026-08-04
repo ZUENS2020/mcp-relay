@@ -42,7 +42,12 @@ go build -buildvcs=false -o relay-agent.exe ./cmd/relay-agent
 ./relay-agent.exe sync --skills-root ../skills-repo
 ```
 
-## NEC 部署
+## UI
+
+管理台按 **Suzuka Design System**（`ZUENS2020/Design-Systems`）落地：Suzuka Green `#006941`、Inter + Space Grotesk、速度线品牌标、Day/Night 主题。工程/数据工作台类产品默认用 Suzuka。
+
+打开：http://127.0.0.1:8740
+
 
 ```bash
 bash scripts/deploy-nec.sh
