@@ -12,7 +12,7 @@ services:
       - RELAY_DATA=/data
       - RELAY_CONFIG_REPO=/config-repo
       - SKILLS_ROOT=/data/skills-repo
-      - RELAY_BASE_URL=https://example.com
+      - RELAY_BASE_URL=${RELAY_BASE_URL:-http://127.0.0.1:8740}
       # Required for MCP admin tools / script Bearer (optional if using UI password login)
       - RELAY_ADMIN_TOKEN=${RELAY_ADMIN_TOKEN:-}
       - RELAY_MCP_ADMIN_TOKEN=${RELAY_ADMIN_TOKEN:-}
