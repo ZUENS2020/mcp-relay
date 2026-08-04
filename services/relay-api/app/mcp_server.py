@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
-from typing import Any
+from typing import Any, AsyncIterator
 
-ADMIN_TOKEN = (
-    os.environ.get("RELAY_MCP_ADMIN_TOKEN") or os.environ.get("RELAY_ADMIN_TOKEN") or ""
-).strip()
+def get_admin_token() -> str:
+    """Read the MCP admin token at call time (not import time) so tests can vary it."""
+    return (
+        os.environ.get("RELAY_MCP_ADMIN_TOKEN") or os.environ.get("RELAY_ADMIN_TOKEN") or ""
+    ).strip()
+
+# The mounted StreamableHTTP app and its lifespan (session_manager.run()).
+# Starlette mounts do NOT execute a child app's lifespan, so we hoist it into
+# the main app's lifespan via get_mcp_lifespan(). Set by mount_mcp().
+_mcp_app = None
+_mcp_lifespan = None
+
+
+@contextlib.asynccontextmanager
+async def get_mcp_lifespan() -> AsyncIterator[None]:
+    """Run the mounted MCP app's lifespan inside the main app's lifespan."""
+    if _mcp_app is not None and _mcp_lifespan is not None:
+        async with _mcp_lifespan(_mcp_app):
+            yield
+    else:
+        yield
 
 
 def _tools_impl() -> Any:
@@ -101,13 +120,24 @@ def _tools_impl() -> Any:
 
 def mount_mcp(app) -> None:
     """Mount Streamable HTTP MCP at /mcp when RELAY_MCP_ADMIN_TOKEN is set."""
-    if not ADMIN_TOKEN:
+    global _mcp_app, _mcp_lifespan
+    token = get_admin_token()
+    if not token:
         return
     try:
         mcp = _tools_impl()
-        inner = mcp.streamable_http_app()
+        # mcp>=2.0.0 registers routes at streamable_http_path (default "/mcp").
+        # We mount this app under "/mcp" below, so register inner routes at root
+        # so the outer mount prefix applies exactly once.
+        inner = mcp.streamable_http_app(streamable_http_path="/")
     except Exception:
         return
+
+    # mcp>=2.0.0: the StreamableHTTP app's lifespan must run (it initialises the
+    # session manager task group). Starlette mounts skip child app lifespans, so
+    # hoist it into the main app's lifespan.
+    _mcp_app = inner
+    _mcp_lifespan = inner.router.lifespan_context
 
     class _AuthMiddleware:
         def __init__(self, asgi_app, token: str):
@@ -131,4 +161,4 @@ def mount_mcp(app) -> None:
                     return
             await self.app(scope, receive, send)
 
-    app.mount("/mcp", _AuthMiddleware(inner, ADMIN_TOKEN))
+    app.mount("/mcp", _AuthMiddleware(inner, token))

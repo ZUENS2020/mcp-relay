@@ -6,10 +6,10 @@ import json
 import os
 import secrets
 import sqlite3
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, AsyncIterator, Iterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
@@ -288,15 +288,19 @@ class NoCacheStaticFiles(StaticFiles):
         return resp
 
 
-app = FastAPI(title="MCP Relay", version="0.1.0")
-if STATIC_DIR.exists():
-    app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
-
-
-@app.on_event("startup")
-def _startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_db()
     seed_from_config_repo()
+    # mcp>=2.0.0 needs its session-manager lifespan to run; Starlette mounts
+    # skip child app lifespans, so we run it here.
+    async with get_mcp_lifespan():
+        yield
+
+
+app = FastAPI(title="MCP Relay", version="0.2.4", lifespan=lifespan)
+if STATIC_DIR.exists():
+    app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/health")
@@ -1329,6 +1333,6 @@ def list_audit(limit: int = 50) -> list[dict[str, Any]]:
     ]
 
 
-from .mcp_server import mount_mcp
+from .mcp_server import get_mcp_lifespan, mount_mcp
 
 mount_mcp(app)
