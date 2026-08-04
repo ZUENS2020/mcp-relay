@@ -32,7 +32,17 @@ docker compose up -d --build
 
 生产环境请修改默认密码。侧栏可「退出登录」。
 
-可选：设置 `RELAY_ADMIN_TOKEN`（或 `RELAY_MCP_ADMIN_TOKEN`），供脚本 / MCP 工具用 `Authorization: Bearer …` 调用管理 API（与 UI 登录无关）。
+#### 可选：由反向代理接管登录（`RELAY_AUTH_MODE=access`）
+
+把 `RELAY_AUTH_MODE` 设为 `access` 后，**管理台不再要求内置账密登录**——身份验证交给前置的反向代理（如 Cloudflare Access / Authelia）。此时：
+
+- 网页管理台直接放行（登录页自动隐藏），由代理层（如 Cloudflare Access 的 Google OAuth）负责拦人
+- **`/mcp` 端点不受影响**：仍要求 `Authorization: Bearer <RELAY_ADMIN_TOKEN>`，脚本 / MCP 工具照常使用
+- 内置账密登录接口仍存在但不再被前端使用；`GET /api/v1/auth/config` 返回 `{"mode": "access"}` 供前端判断
+
+> ⚠️ 注意：`access` 模式信任反向代理已做身份校验。如果服务直接暴露在公网而未经过代理，等于无鉴权开放，请务必配合代理使用。
+
+可选：设置 `RELAY_ADMIN_TOKEN`（或 `RELAY_MCP_ADMIN_TOKEN`），供脚本 / MCP 工具用 `Authorization: Bearer *** 调用管理 API（与 UI 登录无关）。
 
 ### 本地开发（不用 Docker）
 

@@ -335,6 +335,12 @@ def auth_logout(authorization: str | None = Header(default=None)) -> dict[str, s
     return {"status": "ok"}
 
 
+@app.get("/api/v1/auth/config")
+def auth_config() -> dict[str, Any]:
+    """Expose auth mode so the frontend can skip the login gate in access mode."""
+    return {"mode": AUTH_MODE, "login_available": AUTH_MODE == "password"}
+
+
 @app.get("/api/v1/auth/me")
 def auth_me(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     got = _bearer_token(authorization)
@@ -367,6 +373,13 @@ ADMIN_TOKEN = (
 ).strip()
 ADMIN_USER = (os.environ.get("RELAY_ADMIN_USER") or "admin").strip() or "admin"
 ADMIN_PASSWORD = (os.environ.get("RELAY_ADMIN_PASSWORD") or "admin123").strip() or "admin123"
+# "password" = built-in username/password login (default).
+# "access"   = trust upstream identity (Cloudflare Access / reverse proxy).
+#              Web admin APIs are open (the proxy is the gate); the /mcp
+#              endpoint keeps its own Bearer-token auth (see mcp_server.py).
+AUTH_MODE = (os.environ.get("RELAY_AUTH_MODE") or "password").strip().lower()
+if AUTH_MODE not in ("password", "access"):
+    AUTH_MODE = "password"
 # UI login sessions: token -> {user, exp_iso}
 _SESSIONS: dict[str, dict[str, str]] = {}
 SESSION_TTL_HOURS = int(os.environ.get("RELAY_SESSION_TTL_HOURS") or "168")
@@ -428,7 +441,14 @@ def require_device(
 
 
 def require_admin(authorization: str | None = Header(default=None)) -> None:
-    """Accept UI session token or RELAY_ADMIN_TOKEN (MCP/scripts)."""
+    """Accept UI session token or RELAY_ADMIN_TOKEN (MCP/scripts).
+
+    In AUTH_MODE=access the reverse proxy (Cloudflare Access) is the identity
+    gate, so web admin APIs are left open here; the /mcp endpoint enforces its
+    own Bearer-token auth regardless of mode.
+    """
+    if AUTH_MODE == "access":
+        return
     got = _bearer_token(authorization)
     if not got:
         raise HTTPException(401, "login required")

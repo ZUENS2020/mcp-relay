@@ -18,6 +18,8 @@ const state = {
   savedGen: 0,
   savingMcp: false,
   authed: false,
+  /** "password" = built-in login gate; "access" = reverse proxy is the gate. */
+  authMode: "password",
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -128,6 +130,10 @@ async function logout() {
 }
 
 async function ensureSession() {
+  if (state.authMode === "access") {
+    showApp();
+    return true;
+  }
   if (state.authed && getSessionToken()) return true;
   const token = getSessionToken();
   if (!token) {
@@ -859,14 +865,34 @@ function wire() {
   });
 }
 
-wire();
-try {
-  const editorEl = $("#mcp-editor");
-  if (editorEl) McpJsonEditor.mount(editorEl);
-} catch (err) {
-  console.error("mcp editor mount failed", err);
+async function boot() {
+  // Ask the server which auth mode is active so the login gate can be skipped
+  // when a reverse proxy (Cloudflare Access) is the identity gate.
+  try {
+    const cfg = await api("/api/v1/auth/config");
+    state.authMode = cfg.mode === "access" ? "access" : "password";
+  } catch {
+    state.authMode = "password";
+  }
+  if (state.authMode === "access") {
+    const gate = $("#login-gate");
+    if (gate) gate.classList.add("hidden");
+    const logoutBtn = $("#btn-admin-logout");
+    if (logoutBtn) logoutBtn.classList.add("hidden");
+    showApp();
+  }
 }
-refresh().catch((err) => {
+
+wire();
+boot().then(() => {
+  try {
+    const editorEl = $("#mcp-editor");
+    if (editorEl) McpJsonEditor.mount(editorEl);
+  } catch (err) {
+    console.error("mcp editor mount failed", err);
+  }
+  return refresh();
+}).catch((err) => {
   const healthLine = $("#health-line");
   if (healthLine) healthLine.textContent = `加载失败：${err.message}`;
   toast(err.message);

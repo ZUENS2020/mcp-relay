@@ -18,6 +18,7 @@ services:
       - RELAY_MCP_ADMIN_TOKEN=${RELAY_ADMIN_TOKEN:-}
       - RELAY_ADMIN_USER=${RELAY_ADMIN_USER:-admin}
       - RELAY_ADMIN_PASSWORD=${RELAY_ADMIN_PASSWORD:-admin123}
+      - RELAY_AUTH_MODE=${RELAY_AUTH_MODE:-password}
     volumes:
       - ./data:/data
       - ./config-repo:/config-repo:ro
