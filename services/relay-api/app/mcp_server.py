@@ -125,11 +125,32 @@ def mount_mcp(app) -> None:
     if not token:
         return
     try:
+        from mcp.server.transport_security import TransportSecuritySettings
+
         mcp = _tools_impl()
         # mcp>=2.0.0 registers routes at streamable_http_path (default "/mcp").
         # We mount this app under "/mcp" below, so register inner routes at root
         # so the outer mount prefix applies exactly once.
-        inner = mcp.streamable_http_app(streamable_http_path="/")
+        #
+        # mcp 2.0.0's DNS-rebinding protection rejects Host headers it doesn't
+        # know. Allow the public base URL host (e.g. relay.zuens2020.work) in
+        # addition to loopback so /mcp works through Cloudflare Tunnel.
+        base_url = os.environ.get("RELAY_BASE_URL", "").strip().rstrip("/")
+        allowed_hosts = ["127.0.0.1", "localhost", "127.0.0.1:*", "localhost:*"]
+        if base_url:
+            from urllib.parse import urlparse
+
+            host = urlparse(base_url).hostname
+            if host:
+                allowed_hosts.append(host)
+                allowed_hosts.append(f"{host}:*")
+        inner = mcp.streamable_http_app(
+            streamable_http_path="/",
+            transport_security=TransportSecuritySettings(
+                enable_dns_rebinding_protection=True,
+                allowed_hosts=allowed_hosts,
+            ),
+        )
     except Exception:
         return
 

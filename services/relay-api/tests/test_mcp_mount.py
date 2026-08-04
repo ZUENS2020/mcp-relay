@@ -15,7 +15,7 @@ def _client(tmp_path: Path, monkeypatch, **extra_env):
     data = tmp_path / "data"
     data.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("RELAY_DATA", str(data))
-    monkeypatch.setenv("RELAY_ADMIN_TOKEN", "test-admin-token-please-change")
+    monkeypatch.setenv("RELAY_BASE_URL", "http://testserver")
     for k, v in extra_env.items():
         if v is None:
             monkeypatch.delenv(k, raising=False)
