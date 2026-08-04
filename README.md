@@ -36,13 +36,22 @@ docker compose up -d --build
 
 把 `RELAY_AUTH_MODE` 设为 `access` 后，**管理台不再要求内置账密登录**——身份验证交给前置的反向代理（如 Cloudflare Access / Authelia）。此时：
 
-- 网页管理台直接放行（登录页自动隐藏），由代理层（如 Cloudflare Access 的 Google OAuth）负责拦人
+- 网页管理台直接放行（登录页自动隐藏，第一帧就不渲染），由代理层（如 Cloudflare Access 的 Google OAuth）负责拦人
 - **`/mcp` 端点不受影响**：仍要求 `Authorization: Bearer <RELAY_ADMIN_TOKEN>`，脚本 / MCP 工具照常使用
 - 内置账密登录接口仍存在但不再被前端使用；`GET /api/v1/auth/config` 返回 `{"mode": "access"}` 供前端判断
+- 需设置 `RELAY_BASE_URL`（如 `https://relay.example.com`），`/mcp` 的 Host 校验才会放行公网域名
 
 > ⚠️ 注意：`access` 模式信任反向代理已做身份校验。如果服务直接暴露在公网而未经过代理，等于无鉴权开放，请务必配合代理使用。
 
-可选：设置 `RELAY_ADMIN_TOKEN`（或 `RELAY_MCP_ADMIN_TOKEN`），供脚本 / MCP 工具用 `Authorization: Bearer *** 调用管理 API（与 UI 登录无关）。
+##### Cloudflare Access 完整配置（网页 Google 登录 + 机器 Service Token）
+
+1. **Access → Applications** 建应用：`relay.example.com`（网页走 Google OAuth，策略 `Allow` + 你的邮箱）
+2. **Access → Service Auth → Service Tokens** 建 token，记下 **Client ID** / **Client Secret**
+3. 应用策略加一条 **Service Auth**（不是 Allow！）→ Include 选该 Service Token
+   - 机器请求带 `CF-Access-Client-Id` / `CF-Access-Client-Secret` 头即可通过 Access，无需浏览器
+4. 客户端 agent 配置环境变量（见下表），所有 HTTP / WebSocket 请求自动携带
+
+可选：设置 `RELAY_ADMIN_TOKEN`（或 `RELAY_MCP_ADMIN_TOKEN`），供脚本 / MCP 工具用 `Authorization: Bearer <RELAY_ADMIN_TOKEN>` 调用管理 API（与 UI 登录无关）。
 
 ### 本地开发（不用 Docker）
 

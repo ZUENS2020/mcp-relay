@@ -30,7 +30,29 @@ Open the server URL in a browser:
 
 Change the default password in production. Use **Log out** in the sidebar when done.
 
-Optional: set `RELAY_ADMIN_TOKEN` (or `RELAY_MCP_ADMIN_TOKEN`) for scripts / MCP tools via `Authorization: Bearer …` (independent of UI login).
+#### Optional: reverse-proxy auth (`RELAY_AUTH_MODE=access`)
+
+Set `RELAY_AUTH_MODE=access` to skip the built-in password login — identity is
+enforced by an upstream reverse proxy (Cloudflare Access / Authelia):
+
+- The admin UI renders with the login gate hidden from the very first paint
+- **`/mcp` is unaffected**: it still requires `Authorization: Bearer <RELAY_ADMIN_TOKEN>`
+- `GET /api/v1/auth/config` returns `{"mode": "access"}` for the frontend
+- Set `RELAY_BASE_URL` (e.g. `https://relay.example.com`) so the `/mcp` host
+  check accepts the public hostname
+
+> ⚠️ `access` mode trusts the proxy to authenticate. If the service is exposed
+> without a proxy it is effectively open — always pair with one.
+
+##### Cloudflare Access setup (Google login for humans + Service Token for machines)
+
+1. **Access → Applications**: app for `relay.example.com`, policy `Allow` + your email
+2. **Access → Service Auth → Service Tokens**: create a token, note **Client ID** / **Client Secret**
+3. Add a **Service Auth** policy (not Allow!) → Include that Service Token
+   - Machines pass Access with `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers, no browser
+4. Configure the agent env vars (table below); all HTTP / WebSocket calls carry them
+
+Optional: set `RELAY_ADMIN_TOKEN` (or `RELAY_MCP_ADMIN_TOKEN`) for scripts / MCP tools via `Authorization: Bearer <RELAY_ADMIN_TOKEN>` (independent of UI login).
 
 ### Local API without Docker
 
@@ -98,6 +120,7 @@ If a device is deleted in the admin UI, re-run `mcp-relay init --url …`.
 | `RELAY_URL` | Relay base URL |
 | `RELAY_ROOT` | Default `~/.mcp-relay` |
 | `RELAY_MODE` | `live` (default) / `sandbox` / `dry-run` |
+| `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` | Optional: Cloudflare Access Service Token so the agent passes a Service Auth policy (machine identity, no browser) |
 
 ---
 
