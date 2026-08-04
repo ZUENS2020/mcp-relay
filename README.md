@@ -118,6 +118,7 @@ mcp-relay daemon stop        # 停止后台进程
 | `RELAY_URL` | 服务端地址 |
 | `RELAY_ROOT` | 默认 `~/.mcp-relay` |
 | `RELAY_MODE` | `live`（默认）/ `sandbox` / `dry-run` |
+| `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` | 可选：Cloudflare Access Service Token，供 agent 通过 Service Auth 策略（机器身份，无需浏览器登录） |
 
 ---
 

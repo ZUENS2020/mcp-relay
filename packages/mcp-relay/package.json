@@ -1,6 +1,6 @@
 {
   "name": "@zuens2020/mcp-relay",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "MCP Relay 客户端：配置服务端、备份本地 MCP、同步下发",
   "bin": {
     "mcp-relay": "bin/mcp-relay.js"

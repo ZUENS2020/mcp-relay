@@ -334,6 +334,9 @@ func (c *Client) getJSON(path string, out any) error {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Cfg.DeviceToken)
+	for k, v := range c.Cfg.CloudflareAccessHeaders() {
+		req.Header.Set(k, v)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return err
@@ -363,6 +366,9 @@ func (c *Client) postJSON(path string, body any, headers map[string]string, out 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	for k, v := range c.Cfg.CloudflareAccessHeaders() {
 		req.Header.Set(k, v)
 	}
 	if c.Cfg.DeviceToken != "" && req.Header.Get("Authorization") == "" {

@@ -1,0 +1,9 @@
+[Unit]
+Description=WiFi gateway health check and auto-reconnect
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=%h
+ExecStart=%h/bin/wifi-gateway-watch.sh

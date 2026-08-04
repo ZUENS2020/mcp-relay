@@ -37,6 +37,9 @@ func Run(c *syncer.Client) error {
 	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second}
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+c.Cfg.DeviceToken)
+	for k, v := range c.Cfg.CloudflareAccessHeaders() {
+		header.Set(k, v)
+	}
 	conn, resp, err := dialer.Dial(u.String(), header)
 	if err != nil {
 		if resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden) {

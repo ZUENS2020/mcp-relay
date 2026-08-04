@@ -18,7 +18,7 @@ import (
 	"github.com/zuens2020/mcp-relay/agent/internal/wsclient"
 )
 
-const agentVersion = "0.2.5"
+const agentVersion = "0.2.6"
 
 func main() {
 	if len(os.Args) < 2 {
